@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::default::Default;
 use std::sync::Arc;
 use store::localdb::LocalDB;
-use store::{Covenant, Node, Transaction};
+use store::{Instance, Graph, GraphStatus, BridgeInStatus, BridgeOutStatus};
 use tracing_subscriber::fmt::time;
 
 // the input to our `create_user` handler
@@ -17,7 +17,7 @@ pub struct TransactionParams {
 }
 
 #[axum::debug_handler]
-pub async fn create_transaction(
+pub async fn create_instance(
     State(local_db): State<Arc<LocalDB>>,
     Json(payload): Json<TransactionParams>,
 ) -> (StatusCode, Json<Transaction>) {
@@ -73,8 +73,9 @@ pub struct BridgeInTransactionPrepareResponse {
 
 /// bridge-in step2.2
 
-/// deps: TransactionPrepare
+/// deps: BridgeInTransactionPrepare
 ///  handler: operator
+///     Operator creates a graph record in database and broadcast the new graph to peers
 pub struct GraphGenerate {
     pub instance_id: String,
     // UUID
@@ -98,7 +99,8 @@ pub struct GraphGenerateResponse {
 pub struct GraphPresign {
     pub instance_id: String,
     pub graph_id: String,
-    pub graph_ipfs_url: String,
+    // the root directory of all graph_ipfs_* files
+    pub graph_ipfs_base_url: String,
 }
 
 // Federation publish txn signatures in ipfs url
@@ -115,9 +117,9 @@ pub struct GraphPresignCheck {
 
 pub struct GraphPresignCheckResponse {
     pub instance_id: String,
-    pub instace_status: String,
-    pub graph_status: HashMap<String, String>,
-    pub tx: Option<Transaction>,
+    pub instace_status: BridgeInStatus,
+    pub graph_status: HashMap<String, GraphStatus>,
+    pub tx: Option<Instance>,
 }
 
 /// bridge-in: step3
@@ -170,32 +172,14 @@ pub struct BridgeOutUserClaimResponse {
 
 pub struct InstanceListRequest {
     pub user_address: String,
+
+    pub offset: u32,
+    pub limit: u32,
 }
 
 pub struct InstanceListResponse {
     //                               // instance_id -> (txid, bridge_path)
     pub instances: Vec<Instance>, // HashMap<String, (String, String)>
-}
-
-pub struct Instance {
-    pub instance_id: String,
-    pub bridge_path: String,
-    pub from: String,
-    pub to: String,
-
-    // in sat
-    pub amount: u64,
-    pub created_at: u64,
-
-    // updating time
-    pub eta_at: u64,
-
-
-    // TODO: need to define
-    pub status: u32,
-
-    pub goat_txid: String,
-    pub btc_txid: String,
 }
 
 pub struct InstanceGetRequest {
@@ -204,4 +188,29 @@ pub struct InstanceGetRequest {
 
 pub struct InstanceGetResponse {
     pub instance: Instance,
+}
+
+
+/// graph_overview
+
+// All fields can be optional
+// if all are none, we fetch all the graph list order by timestamp desc.
+pub struct GraphListRequest {
+    pub role: String,
+    pub status: GraphStatus,
+    pub operator: String,
+    pub pegin_txid: String,
+
+    pub offset: u32,
+    pub limit: u32,
+}
+
+pub struct GraphListResponse {
+    pub graphs: Vec<Graph>,
+    pub total_bridge_in_amount: u64,
+    pub total_bridge_in_txn: u32,
+    pub total_bridge_out_amount: u64,
+    pub total_bridge_out_txn: u32,
+    pub online_nodes: u32,
+    pub total_nodes: u32,
 }

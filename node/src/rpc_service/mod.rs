@@ -1,10 +1,7 @@
-mod covenant;
 mod node;
-mod transaction;
-mod presign;
+mod bitvm2;
 
 use axum::routing::on;
-use covenant::create_covenant;
 use node::update_node;
 
 use std::sync::Arc;
@@ -30,7 +27,7 @@ use rand::thread_rng;
 use std::net::{Ipv4Addr, SocketAddr};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
-use crate::rpc_service::transaction::{create_transaction, get_transaction};
+use crate::rpc_service::bitvm2::{create_transaction, get_transaction};
 
 /// Serve the Multiaddr we are listening on and the host files.
 // basic handler that responds with a static string
@@ -42,10 +39,9 @@ pub(crate) async fn serve(addr: String) {
     let localdb = Arc::new(LocalDB::new("sqlite:/tmp/.bitvm2-node.db", true).await);
     let server = Router::new()
         .route("/", get(root))
-        .route("/covenants", post(create_covenant))
         .route("/nodes", post(update_node))
-        .route("/transactions", post(create_transaction))
-        .route("/transactions", get(get_transaction))
+        .route("/instances", post(create_instance))
+        .route("/instances/graphs", post(create_graph))
         .with_state(localdb);
 
     let listener = TcpListener::bind(addr).await.unwrap();

@@ -29,3 +29,25 @@ pub async fn update_node(
     local_db.update_node(node.clone()).await;
     (StatusCode::OK, Json(node))
 }
+/// node_overview
+pub struct NodeListRequest {
+    pub role: String,
+    pub status: String, // online/offline
+
+    pub offset: u32,
+    pub limit: u32,
+}
+
+pub struct NodeListResponse {
+    pub nodes: Vec<NodeDesc>,
+}
+
+pub struct NodeDesc {
+    // node
+    pub peer_id: String,
+    pub role: String,
+    pub update_at: std::time::SystemTime,
+
+    // dynamic status: online/offline
+    pub status: String,
+}
