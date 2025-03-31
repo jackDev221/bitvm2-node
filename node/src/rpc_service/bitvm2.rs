@@ -5,44 +5,45 @@ use bitvm2_lib::actors::Actor;
 use serde::{Deserialize, Serialize};
 use std::default::Default;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 use store::localdb::LocalDB;
 use store::{Instance, Graph, GraphStatus, BridgeInStatus, BridgeOutStatus};
 use tracing_subscriber::fmt::time;
+use crate::rpc_service::current_time_secs;
 
 // the input to our `create_user` handler
-#[derive(Deserialize)]
-pub struct TransactionParams {
-    pub bridge_path: String,
-    pub pegin_txid: Option<String>,
-}
-
 #[axum::debug_handler]
 pub async fn create_instance(
     State(local_db): State<Arc<LocalDB>>,
-    Json(payload): Json<TransactionParams>,
-) -> (StatusCode, Json<Transaction>) {
+    Json(payload): Json<BridgeInTransactionPrepare>,
+) -> (StatusCode, Json<BridgeInTransactionPrepareResponse>) {
     // insert your application logic here
-    let tx = Transaction {
+    let tx = Instance {
+        instance_id: payload.instance_id,
         bridge_path: payload.bridge_path,
-    };
-    local_db.create_transaction(tx.clone()).await;
-    (StatusCode::OK, Json(tx))
-}
-#[axum::debug_handler]
-pub async fn get_transaction(
-    State(local_db): State<Arc<LocalDB>>,
-    Json(payload): Json<TransactionParams>,
-) -> (StatusCode, Json<Transaction>) {
-    // insert your application logic here
-    let tx = Transaction {
-        bridge_path: payload.bridge_path,
-        ..Default::default()
-    };
-    local_db.get_transaction(tx.clone()).await;
-    (StatusCode::OK, Json(tx))
-}
+        from: payload.from,
+        to: payload.to,
+        // in sat
+        amount: payload.amount,
+        created_at: current_time_secs(),
 
-#[derive(Deserialize)]
+        // updating time
+        eta_at: current_time_secs(),
+
+        // BridgeInStatus | BridgeOutStutus
+        status: BridgeInStatus::Submitted.to_string(),
+
+        ..Default::default()
+        //pub goat_txid: String,
+        //pub btc_txid: String,
+    };
+
+    local_db.create_instance(tx.clone()).await;
+
+    let resp = BridgeInTransactionPrepareResponse{};
+    (StatusCode::OK, Json(resp))
+}
+#[derive(Deserialize, Serialize)]
 pub struct UTXO {
     txid: String,
     vout: u32,
@@ -63,12 +64,12 @@ pub struct BridgeInTransactionPrepare {
     pub utxo: Vec<UTXO>,
 
     // address
-    pub sender: String,
-    pub receiver: String,
+    pub from: String,
+    pub to: String,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct BridgeInTransactionPrepareResponse {
-    status: StatusCode,
 }
 
 /// bridge-in step2.2
@@ -76,6 +77,7 @@ pub struct BridgeInTransactionPrepareResponse {
 /// deps: BridgeInTransactionPrepare
 ///  handler: operator
 ///     Operator creates a graph record in database and broadcast the new graph to peers
+#[derive(Deserialize)]
 pub struct GraphGenerate {
     pub instance_id: String,
     // UUID
@@ -85,6 +87,7 @@ pub struct GraphGenerate {
 }
 
 // UI can go next(step2.3) once one operator responds
+#[derive(Deserialize, Serialize)]
 pub struct GraphGenerateResponse {
     pub instance_id: String,
     pub graph_id: String,
@@ -95,7 +98,8 @@ pub struct GraphGenerateResponse {
 
 /// bridge-in step 2.3
 
-/// handler: federation
+/// handler: committee
+#[derive(Deserialize)]
 pub struct GraphPresign {
     pub instance_id: String,
     pub graph_id: String,
@@ -103,18 +107,21 @@ pub struct GraphPresign {
     pub graph_ipfs_base_url: String,
 }
 
-// Federation publish txn signatures in ipfs url
+// Committee publishs txn signatures in ipfs url
+#[derive(Deserialize, Serialize)]
 pub struct GraphPresignResponse {
     pub instance_id: String,
     pub graph_id: String,
-    pub graph_ipfs_federation_sig: String,
+    pub graph_ipfs_committee_sig: String,
 }
 
+#[derive(Deserialize)]
 pub struct GraphPresignCheck {
     pub instance_id: String,
     // get graph_id from nodes' database,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct GraphPresignCheckResponse {
     pub instance_id: String,
     pub instace_status: BridgeInStatus,
@@ -125,6 +132,7 @@ pub struct GraphPresignCheckResponse {
 /// bridge-in: step3
 
 /// handler: relayer
+#[derive(Deserialize)]
 pub struct PegBTCMint {
     pub instance_id: String,
     pub graph_id: Vec<String>,
@@ -132,13 +140,13 @@ pub struct PegBTCMint {
     // TODO: https://github.com/GOATNetwork/bitvm2-L2-contracts/blob/main/contracts/Gateway.sol#L43
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct PegBTCMintResponse {
     // 200: success,
-    pub status_code: http::StatusCode,
 }
 
-
 /// bridge-out step2
+#[derive(Deserialize)]
 pub struct BridgeOutTransactionPrepare {
     pub instance_id: String,
     // GOAT txid
@@ -147,6 +155,7 @@ pub struct BridgeOutTransactionPrepare {
     pub operator: String,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct BridgeOutTransactionPrepareResponse {
     pub instance_id: String,
     pub btc_hashed_timelock_utxo: UTXO,
@@ -154,7 +163,8 @@ pub struct BridgeOutTransactionPrepareResponse {
     pub operator_refund_address: String,
 }
 
-// handler: Federation
+// handler: committee
+#[derive(Deserialize)]
 pub struct BridgeOutUserClaimRequest {
     pub instance_id: String,
     // hex
@@ -162,6 +172,7 @@ pub struct BridgeOutUserClaimRequest {
     pub signed_claim_txn: String,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct BridgeOutUserClaimResponse {
     pub instance_id: String,
     pub claim_txid: String,
@@ -169,7 +180,7 @@ pub struct BridgeOutUserClaimResponse {
 
 
 /// get tx detail
-
+#[derive(Deserialize)]
 pub struct InstanceListRequest {
     pub user_address: String,
 
@@ -177,15 +188,18 @@ pub struct InstanceListRequest {
     pub limit: u32,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct InstanceListResponse {
     //                               // instance_id -> (txid, bridge_path)
     pub instances: Vec<Instance>, // HashMap<String, (String, String)>
 }
 
+#[derive(Deserialize)]
 pub struct InstanceGetRequest {
     pub instance_id: String,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct InstanceGetResponse {
     pub instance: Instance,
 }
@@ -195,6 +209,7 @@ pub struct InstanceGetResponse {
 
 // All fields can be optional
 // if all are none, we fetch all the graph list order by timestamp desc.
+#[derive(Deserialize)]
 pub struct GraphListRequest {
     pub role: String,
     pub status: GraphStatus,
@@ -205,6 +220,7 @@ pub struct GraphListRequest {
     pub limit: u32,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct GraphListResponse {
     pub graphs: Vec<Graph>,
     pub total_bridge_in_amount: u64,

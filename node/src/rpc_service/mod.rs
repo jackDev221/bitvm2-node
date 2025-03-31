@@ -25,9 +25,16 @@ use libp2p::{
 };
 use rand::thread_rng;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::time::UNIX_EPOCH;
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
-use crate::rpc_service::bitvm2::{create_transaction, get_transaction};
+use crate::rpc_service::bitvm2::{create_instance};
+
+#[inline(always)]
+pub fn current_time_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+}
+
 
 /// Serve the Multiaddr we are listening on and the host files.
 // basic handler that responds with a static string
@@ -41,7 +48,7 @@ pub(crate) async fn serve(addr: String) {
         .route("/", get(root))
         .route("/nodes", post(update_node))
         .route("/instances", post(create_instance))
-        .route("/instances/graphs", post(create_graph))
+//        .route("/instances/graphs", post(create_graph))
         .with_state(localdb);
 
     let listener = TcpListener::bind(addr).await.unwrap();

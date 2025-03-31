@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, Row, Sqlite, SqlitePool, migrate::MigrateDatabase};
+use sqlx::{FromRow, SqlitePool, migrate::MigrateDatabase};
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize)]
 pub struct Node {
     pub peer_id: String,
@@ -28,16 +28,22 @@ pub struct Instance {
     pub btc_txid: String,
 }
 
-/// Peg-in status
-#[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub enum BridgeInStatus {
     #[default]
     Submitted,
-    Presigned, // includes operator and federation presigns
+    Presigned, // includes operator and Committee presigns
     L1Broadcasted,
     L2Minted, // success
 }
-#[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
+
+impl std::fmt::Display for BridgeInStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub enum BridgeOutStatus {
     #[default]
     L2Locked,
@@ -54,12 +60,19 @@ pub enum BridgeOutStatus {
     L2Refunded,
 }
 
+
+impl std::fmt::Display for BridgeOutStatus{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// graph status
-#[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub enum GraphStatus {
     #[default]
     OperatorPresigned,
-    FederationPresigned,
+    CommitteePresigned,
     KickOff,
     Challenge,
     Assert,
@@ -67,6 +80,12 @@ pub enum GraphStatus {
     Take2,
     Disprove, // fail to reimbursement
     Deprecated, // reimbursement by other operators
+}
+
+impl std::fmt::Display for GraphStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 /// graph detail
 ///     A covenant is a graph.

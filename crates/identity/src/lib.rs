@@ -1,3 +1,4 @@
+use std::string::String;
 use rand::RngCore;
 use secp256k1::Secp256k1;
 use std::{
@@ -18,7 +19,6 @@ use musig2::{
     CompactSignature, FirstRound, PartialSignature, PubNonce, SecNonceSpices, SecondRound,
 };
 use musig2::KeyAggContext;
-use secp256k1::serde::__private::de::Content::String;
 
 pub fn generate_local_key() -> identity::Keypair {
     identity::Keypair::generate_ed25519()
@@ -47,7 +47,7 @@ pub fn musig2_first_round(key_agg_ctx: KeyAggContext, signer_index: usize, messa
 }
 
 pub fn musig2_receive_pub_nonce(ctx: KeyAggContext, peer_id: String, partial: musig2::PartialSignature) {
-    
+
 }
 
 

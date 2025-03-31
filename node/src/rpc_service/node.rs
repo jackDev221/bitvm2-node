@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::default::Default;
 use std::sync::Arc;
 use store::localdb::LocalDB;
-use store::{Covenant, Node};
+use store::{Node};
 use tracing_subscriber::fmt::time;
 
 // the input to our `create_user` handler

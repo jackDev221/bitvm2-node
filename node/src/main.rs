@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     // load role
     let actor =
-        Actor::try_from(std::env::var("ACTOR").unwrap_or("Challenger".to_string()).as_str())
+        Actor::from_str(std::env::var("ACTOR").unwrap_or("Challenger".to_string()).as_str())
             .unwrap();
 
     let local_key = std::env::var("KEY").expect("KEY is missing");
