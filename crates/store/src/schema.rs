@@ -60,8 +60,7 @@ pub enum BridgeOutStatus {
     L2Refunded,
 }
 
-
-impl std::fmt::Display for BridgeOutStatus{
+impl std::fmt::Display for BridgeOutStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
@@ -78,7 +77,7 @@ pub enum GraphStatus {
     Assert,
     Take1,
     Take2,
-    Disprove, // fail to reimbursement
+    Disprove,   // fail to reimbursement
     Deprecated, // reimbursement by other operators
 }
 
@@ -98,8 +97,15 @@ pub struct Graph {
     pub amount: u64,
     pub created_at: u64,
     pub status: GraphStatus,
-
-    challenge_txid: Option<String>,
-    disprove_txid: Option<String>,
+    pub challenge_txid: Option<String>,
+    pub disprove_txid: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct FilterGraphsInfo {
+    /// TODO change to option<...>
+    pub status: GraphStatus,
+    pub pegin_txid: String,
+    pub offset: u32,
+    pub limit: u32,
+}
