@@ -6,16 +6,16 @@ use alloy::primitives::TxHash;
 use alloy::{
     eips::BlockNumberOrTag,
     network::{
-        eip2718::Encodable2718, Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder,
-        TxSigner, TxSignerSync,
+        Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder, TxSigner, TxSignerSync,
+        eip2718::Encodable2718,
     },
     primitives::{Address as EvmAddress, Bytes, ChainId, FixedBytes, U256},
     providers::{Provider, ProviderBuilder, RootProvider},
     rpc::types::TransactionRequest,
-    signers::{local::PrivateKeySigner, Signer},
+    signers::{Signer, local::PrivateKeySigner},
     sol,
     sol_types::SolEvent,
-    transports::http::{reqwest::Url, Client, Http},
+    transports::http::{Client, Http, reqwest::Url},
 };
 use anyhow::format_err;
 use async_trait::async_trait;
@@ -287,7 +287,7 @@ impl ChainAdaptor for GoatAdaptor {
             .await?;
         Ok(WithdrawData {
             pegin_txid: res._0.0,
-            operator_address: res._1.0 .0,
+            operator_address: res._1.0.0,
             status: res._2.into(),
             instance_id: Uuid::from_slice(res._3.as_slice())?,
             lock_amount: res._4,
@@ -541,40 +541,8 @@ impl ChainAdaptor for GoatAdaptor {
 }
 
 impl GoatAdaptor {
-    pub fn new(config: Option<GoatInitConfig>) -> Self {
-        if let Some(_config) = config {
-            Self::from_config(_config)
-        } else {
-            dotenv::dotenv().ok();
-            let rpc_url_str = dotenv::var("GATE_CHAIN_ADAPTOR_GOAT_RPC_URL")
-                .expect("Failed to read GATE_CHAIN_ADAPTOR_GOAT_RPC_URL variable");
-            let gateway_address_str = dotenv::var("GATEWAY_CHAIN_ADAPTOR_GOAT_GATE_ADDRESS")
-                .expect("Failed to read GATE_CHAIN_ADAPTOR_GOAT_GATE_ADDRESS variable");
-            let gateway_creation = dotenv::var("GATE_CHAIN_ADAPTOR_GOAT_GATE_CREATION")
-                .expect("Failed to read GATE_CHAIN_ADAPTOR_GOAT_GATE_CREATION variable");
-            let to_block = dotenv::var("GATE_CHAIN_ADAPTOR_GOAT_TO_BLOCK");
-
-            let private_key = match dotenv::var("GATE_CHAIN_ADAPTOR_GOAT_PRIVATE_KEY") {
-                Ok(key) => Some(key),
-                Err(_) => None,
-            };
-            let chain_id = dotenv::var("GATE_CHAIN_ADAPTOR_GOAT_CHAIN_ID")
-                .expect("Failed to read GATE_CHAIN_ADAPTOR_GOAT_CHAIN_ID variable");
-
-            let rpc_url = rpc_url_str.parse::<Url>();
-            let gateway_address = gateway_address_str.parse::<EvmAddress>();
-            Self::from_config(GoatInitConfig {
-                rpc_url: rpc_url.unwrap(),
-                gateway_address: gateway_address.unwrap(),
-                gateway_creation_block: gateway_creation.parse::<u64>().unwrap(),
-                to_block: match to_block {
-                    Ok(block) => Some(BlockNumberOrTag::from_str(block.as_str()).unwrap()),
-                    Err(_) => Some(BlockNumberOrTag::Finalized),
-                },
-                private_key,
-                chain_id: chain_id.parse().expect("fail to parse int"),
-            })
-        }
+    pub fn new(config: GoatInitConfig) -> Self {
+        Self::from_config(config)
     }
 
     fn from_config(config: GoatInitConfig) -> Self {

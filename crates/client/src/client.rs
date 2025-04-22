@@ -1,6 +1,6 @@
 use crate::chain::chain::Chain;
 use crate::chain::chain_adaptor::{
-    get_chain_adaptor, ChainAdaptor, GoatNetwork, OperatorData, PeginData, WithdrawData,
+    ChainAdaptor, GoatNetwork, OperatorData, PeginData, WithdrawData, get_chain_adaptor,
 };
 use crate::chain::goat_adaptor::GoatInitConfig;
 use crate::esplora::get_esplora_url;
@@ -26,7 +26,7 @@ impl BitVM2Client {
         esplora_url: Option<&str>,
         btc_network: Network,
         goat_network: GoatNetwork,
-        goat_config: Option<GoatInitConfig>,
+        goat_config: GoatInitConfig,
     ) -> Self {
         let local_db = LocalDB::new(&format!("sqlite:{db_path}"), true).await;
         local_db.migrate().await;

@@ -1,9 +1,9 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use bitcoin::blockdata::script::Script;
 use bitcoin::hashes::Hash;
 use bitcoin::{Amount, Block, Network, Transaction, Txid};
 use esplora_client::{AsyncClient, Builder, Tx};
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use spv::verify_merkle_proof;
 use spv::{
     BitcoinMerkleTree, BlockInclusionProof, CircuitBlockHeader, CircuitTransaction, MMRGuest,
@@ -142,7 +142,7 @@ pub async fn check_pegin_tx(
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use futures::{stream, StreamExt};
+    use futures::{StreamExt, stream};
     #[tokio::test]
     async fn test_check_pegin_tx() {
         // tx: https://mempool.space/testnet/tx/e413208c6644d51f4f3adf3a5aad425da817ac825e56352e7164de1e2a4d9394
@@ -150,7 +150,7 @@ pub mod test {
         let esplora_url = "https://mempool.space/testnet/api"; // Testnet
         let client = Builder::new(esplora_url).build_async().unwrap();
 
-        let block_height_start = 4148378;
+        let block_height_start = 4296464;
         let block_height = block_height_start + 1;
 
         let blocks = stream::iter((block_height_start..block_height).into_iter())
@@ -161,7 +161,7 @@ pub mod test {
             .collect::<Vec<_>>()
             .await;
 
-        let txid = "e413208c6644d51f4f3adf3a5aad425da817ac825e56352e7164de1e2a4d9394";
+        let txid = "f3945b0793caaac369378996e693040a629f0bd19a1c32177b999a3ea8f0b109";
         let network = Network::Testnet;
 
         assert!(check_pegin_tx(&client, &network, &blocks, txid).await.unwrap());
