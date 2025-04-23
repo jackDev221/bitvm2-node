@@ -35,8 +35,7 @@ impl CommitteeMasterKey {
         NodeMasterKey(self.0).master_keypair()
     }
     pub fn keypair_for_instance(&self, instance_id: Uuid) -> Keypair {
-        let domain =
-            vec![b"committee_bitvm_key".to_vec(), instance_id.as_bytes().to_vec()].concat();
+        let domain = [b"committee_bitvm_key".to_vec(), instance_id.as_bytes().to_vec()].concat();
         let instance_seed = derive_secret(&self.0, &domain);
         generate_keypair_from_seed(instance_seed)
     }
@@ -45,7 +44,7 @@ impl CommitteeMasterKey {
         instance_id: Uuid,
         graph_id: Uuid,
     ) -> [(SecNonce, PubNonce, Signature); COMMITTEE_PRE_SIGN_NUM] {
-        let domain = vec![
+        let domain = [
             b"committee_bitvm_nonces".to_vec(),
             instance_id.as_bytes().to_vec(),
             graph_id.as_bytes().to_vec(),
@@ -69,8 +68,7 @@ impl OperatorMasterKey {
         self.master_keypair()
     }
     pub fn wots_keypair_for_graph(&self, graph_id: Uuid) -> (WotsSecretKeys, WotsPublicKeys) {
-        let domain =
-            vec![b"operator_bitvm_wots_key".to_vec(), graph_id.as_bytes().to_vec()].concat();
+        let domain = [b"operator_bitvm_wots_key".to_vec(), graph_id.as_bytes().to_vec()].concat();
         let wot_seed = derive_secret(&self.0, &domain);
         generate_wots_keys(&wot_seed)
     }
