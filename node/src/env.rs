@@ -3,7 +3,7 @@ use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::Address as EvmAddress;
 use bitcoin::{Network, PublicKey, key::Keypair};
 use bitvm2_lib::keys::NodeMasterKey;
-use client::chain::goat_adaptor::GoatInitConfig;
+use client::chain::{chain_adaptor::GoatNetwork, goat_adaptor::GoatInitConfig};
 use reqwest::Url;
 use std::str::FromStr;
 
@@ -13,8 +13,14 @@ pub const ENV_GOAT_GATEWAY_CONTRACT_CREATION: &str = "GOAT_GATEWAY_CONTRACT_CREA
 pub const ENV_GOAT_GATEWAY_CONTRACT_TO_BLOCK: &str = "GOAT_GATEWAY_CONTRACT_TO_BLOCK";
 pub const ENV_GOAT_PRIVATE_KEY: &str = "GOAT_PRIVATE_KEY";
 pub const ENV_GOAT_CHAIN_ID: &str = "GOAT_CHAIN_ID";
+pub const ENV_BITVM_SECRET: &str = "BITVM_SECRET";
+pub const ENV_PEER_KEY: &str = "KEY";
+pub const ENV_PERR_ID: &str = "PEER_ID";
+pub const ENV_ACTOR: &str = "ACTOR";
+pub const ENV_IPFS_ENDPOINT: &str = "IPFS_ENDPOINT";
 
 pub const SCRIPT_CACHE_FILE_NAME: &str = "cache/partial_script.bin";
+pub const IPFS_GRAPH_CACHE_DIR: &str = "cache/graph_cache/";
 pub const DUST_AMOUNT: u64 = goat::transactions::base::DUST_AMOUNT;
 pub const MAX_CUSTOM_INPUTS: usize = 100;
 
@@ -36,15 +42,20 @@ pub const CHALLENGE_RATE: u64 = 0; // 0%
 pub const RATE_MULTIPLIER: u64 = 10000;
 
 const COMMITTEE_MEMBER_NUMBER: usize = 3;
-const NETWORK: Network = Network::Testnet;
+const BTC_NETWORK: Network = Network::Testnet;
+const GOAT_NETWORK: GoatNetwork = GoatNetwork::Test;
 
 pub fn get_network() -> Network {
-    NETWORK
+    BTC_NETWORK
+}
+
+pub fn get_goat_network() -> GoatNetwork {
+    GOAT_NETWORK
 }
 
 pub fn get_bitvm_key() -> Result<Keypair, Box<dyn std::error::Error>> {
     // TODO: what if node restart with different BITVM_SECRET ?
-    let bitvm_secret = std::env::var("BITVM_SECRET").expect("BITVM_SECRET is missing");
+    let bitvm_secret = std::env::var(ENV_BITVM_SECRET).expect("{ENV_BITVM_SECRET} is missing");
     Ok(Keypair::from_seckey_str_global(&bitvm_secret)?)
 }
 
@@ -83,5 +94,39 @@ pub fn get_bitvm2_client_config() -> GoatInitConfig {
         },
         private_key,
         chain_id: chain_id.parse().expect("fail to parse int"),
+    }
+}
+
+pub enum IpfsTxName {
+    AssertCommit0,
+    AssertCommit1,
+    AssertCommit2,
+    AssertCommit3,
+    AssertFinal,
+    AssertInit,
+    Challenge,
+    Disprove,
+    Kickoff,
+    Pegin,
+    Take1,
+    Take2,
+}
+
+impl IpfsTxName {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            IpfsTxName::AssertCommit0 => "assert-commit0.hex",
+            IpfsTxName::AssertCommit1 => "assert-commit1.hex",
+            IpfsTxName::AssertCommit2 => "assert-commit2.hex",
+            IpfsTxName::AssertCommit3 => "assert-commit3.hex",
+            IpfsTxName::AssertFinal => "assert-final.hex",
+            IpfsTxName::AssertInit => "assert-init.hex",
+            IpfsTxName::Challenge => "challenge.hex",
+            IpfsTxName::Disprove => "disprove.hex",
+            IpfsTxName::Kickoff => "kickoff.hex",
+            IpfsTxName::Pegin => "pegin.hex",
+            IpfsTxName::Take1 => "take1.hex",
+            IpfsTxName::Take2 => "take2.hex",
+        }
     }
 }
