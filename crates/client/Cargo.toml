@@ -7,13 +7,15 @@ edition.workspace = true
 tokio = { workspace = true }
 hex = { workspace = true }
 async-trait = { workspace = true }
-dotenv = { workspace = true }
+tracing = { workspace = true }
 alloy = { workspace = true }
 uuid = { workspace = true }
 bitcoin = { workspace = true }
 esplora-client = { workspace = true }
 anyhow = { workspace = true }
 store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 
 [dev-dependencies]
