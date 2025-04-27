@@ -10,6 +10,7 @@ use sqlx::pool::PoolConnection;
 use sqlx::types::Uuid;
 use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction, migrate::MigrateDatabase};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::log::warn;
 
 #[derive(Clone)]
 pub struct LocalDB {
@@ -142,24 +143,24 @@ impl<'a> StorageProcessor<'a> {
         let mut instance_count_str = "SELECT count(*) as total_instances FROM instance".to_string();
         let mut conditions: Vec<String> = vec![];
         if let Some(from_addr) = from_addr {
-            conditions.push(format!("from_addr = \'{}\'", from_addr));
+            conditions.push(format!("from_addr = \'{from_addr}\'"));
         }
         if let Some(status) = status {
-            conditions.push(format!("status = \'{}\'", status));
+            conditions.push(format!("status = \'{status}\'"));
         }
         if let Some(bridge_path) = bridge_path {
-            conditions.push(format!("bridge_path = {}", bridge_path));
+            conditions.push(format!("bridge_path = {bridge_path}"));
         }
         if !conditions.is_empty() {
-            let condition_str = conditions.join(" and ");
-            instance_query_str = format!("{} WHERE {}", instance_query_str, condition_str);
-            instance_count_str = format!("{} WHERE {}", instance_count_str, condition_str);
+            let condition_str = conditions.join(" AND ");
+            instance_query_str = format!("{instance_query_str} WHERE {condition_str}");
+            instance_count_str = format!("{instance_count_str} WHERE {condition_str}");
         }
         if let Some(limit) = limit {
-            instance_query_str = format!("{} LIMIT {}", instance_query_str, limit);
+            instance_query_str = format!("{instance_query_str} LIMIT {limit}");
         }
         if let Some(offset) = offset {
-            instance_query_str = format!("{} OFFSET {}", instance_query_str, offset);
+            instance_query_str = format!("{instance_query_str} OFFSET {offset}");
         }
         let instances = sqlx::query_as::<_, Instance>(instance_query_str.as_str())
             .fetch_all(self.conn())
@@ -235,10 +236,10 @@ impl<'a> StorageProcessor<'a> {
     ) -> anyhow::Result<()> {
         let mut update_fields = vec![];
         if let Some(status) = status {
-            update_fields.push(format!("status = \'{}\'", status));
+            update_fields.push(format!("status = \'{status}\'"));
         }
         if let Some(pegin_txid) = pegin_txid {
-            update_fields.push(format!("pegin_txid = \'{}\'", pegin_txid));
+            update_fields.push(format!("pegin_txid = \'{pegin_txid}\'"));
         }
         if update_fields.is_empty() {
             return Ok(());
@@ -262,17 +263,17 @@ impl<'a> StorageProcessor<'a> {
     ) -> anyhow::Result<()> {
         let mut update_fields = vec![];
         if let Some(status) = status {
-            update_fields.push(format!("status = \'{}\'", status));
+            update_fields.push(format!("status = \'{status}\'"));
         }
         if let Some(ipfs_base_url) = ipfs_base_url {
-            update_fields.push(format!("graph_ipfs_base_url = \'{}\'", ipfs_base_url));
+            update_fields.push(format!("graph_ipfs_base_url = \'{ipfs_base_url}\'"));
         }
 
         if let Some(challenge_txid) = challenge_txid {
-            update_fields.push(format!("challenge_txid = \'{}\'", challenge_txid));
+            update_fields.push(format!("challenge_txid = \'{challenge_txid}\'"));
         }
         if let Some(disprove_txid) = disprove_txid {
-            update_fields.push(format!("disprove_txid = \'{}\'", disprove_txid));
+            update_fields.push(format!("disprove_txid = \'{disprove_txid}\'"));
         }
         if update_fields.is_empty() {
             return Ok(());
@@ -282,10 +283,7 @@ impl<'a> StorageProcessor<'a> {
             update_fields.join(" , "),
             hex::encode(graph_id)
         );
-
-        println!("{}", update_str);
         let _ = sqlx::query(update_str.as_str()).execute(self.conn()).await?;
-
         Ok(())
     }
 
@@ -304,6 +302,7 @@ impl<'a> StorageProcessor<'a> {
         &mut self,
         status: Option<String>,
         operator: Option<String>,
+        from_addr: Option<String>,
         pegin_txid: Option<String>,
         offset: Option<u32>,
         limit: Option<u32>,
@@ -319,30 +318,35 @@ impl<'a> StorageProcessor<'a> {
          INNER JOIN  instance ON  graph.instance_id = instance.instance_id"
             .to_string();
 
+        if let Some(from_addr) = from_addr {
+            graph_query_str = format!("{graph_query_str} AND instance.from_addr  =\'{from_addr}\'");
+            graph_count_str = format!("{graph_count_str} AND instance.from_addr  =\'{from_addr}\'");
+        }
+
         let mut conditions: Vec<String> = vec![];
 
         if let Some(status) = status {
-            conditions.push(format!("status = \'{}\'", status));
+            conditions.push(format!("status = \'{status}\'"));
         }
         if let Some(operator) = operator {
-            conditions.push(format!("operator = \'{}\'", operator));
+            conditions.push(format!("operator = \'{operator}\'"));
         }
         if let Some(pegin_txid) = pegin_txid {
-            conditions.push(format!("pegin_txid = \'{}\'", pegin_txid));
+            conditions.push(format!("pegin_txid = \'{pegin_txid}\'"));
         }
 
         if !conditions.is_empty() {
             let condition_str = conditions.join(" AND ");
-            graph_query_str = format!("{} WHERE {}", graph_query_str, condition_str);
-            graph_count_str = format!("{} WHERE {}", graph_count_str, condition_str);
+            graph_query_str = format!("{graph_query_str} WHERE {condition_str}");
+            graph_count_str = format!("{graph_count_str} WHERE {condition_str}");
         }
 
         if let Some(limit) = limit {
-            graph_query_str = format!("{} LIMIT {}", graph_query_str, limit);
+            graph_query_str = format!("{graph_query_str} LIMIT {limit}");
         }
 
         if let Some(offset) = offset {
-            graph_query_str = format!("{} OFFSET {}", graph_query_str, offset);
+            graph_query_str = format!("{graph_query_str} OFFSET {offset}");
         }
         let graphs = sqlx::query_as::<_, GrapRpcQueryData>(graph_query_str.as_str())
             .fetch_all(self.conn())
@@ -408,22 +412,22 @@ impl<'a> StorageProcessor<'a> {
         }
         if let Some(status_expect) = status_expect {
             match status_expect.as_str() {
-                NODE_STATUS_ONLINE => conditions.push(format!("updated_at > {}", time_threshold)),
-                NODE_STATUS_OFFLINE => conditions.push(format!("updated_at <= {}", time_threshold)),
+                NODE_STATUS_ONLINE => conditions.push(format!("updated_at > {time_threshold}")),
+                NODE_STATUS_OFFLINE => conditions.push(format!("updated_at <= {time_threshold}")),
                 _ => {}
             }
         }
         if !conditions.is_empty() {
             let condition_str = conditions.join(" AND ");
-            nodes_query_str = format!("{} WHERE {}", nodes_query_str, condition_str);
-            nodes_count_str = format!("{} WHERE {}", nodes_count_str, condition_str);
+            nodes_query_str = format!("{nodes_query_str} WHERE {condition_str}");
+            nodes_count_str = format!("{nodes_count_str} WHERE {condition_str}");
         }
 
         if let Some(limit) = limit {
-            nodes_query_str = format!("{} LIMIT {}", nodes_query_str, limit);
+            nodes_query_str = format!("{nodes_query_str} LIMIT {limit}");
         }
         if let Some(offset) = offset {
-            nodes_query_str = format!("{} OFFSET {}", nodes_query_str, offset);
+            nodes_query_str = format!("{nodes_query_str} OFFSET {offset}");
         }
         let nodes =
             sqlx::query_as::<_, Node>(nodes_query_str.as_str()).fetch_all(self.conn()).await?;
@@ -509,9 +513,7 @@ impl<'a> StorageProcessor<'a> {
         current_time: i64,
     ) -> anyhow::Result<bool> {
         let query_str = format!(
-            "Update  message Set state = {}, updated_at = {} WHERE id IN ({})",
-            state,
-            current_time,
+            "Update  message Set state = {state}, updated_at = {current_time} WHERE id IN ({})",
             create_place_holders(ids)
         );
         let mut query = sqlx::query(&query_str);
@@ -580,7 +582,14 @@ impl<'a> StorageProcessor<'a> {
         let updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
         if let Some(pubkey_collect) = pubkey_collect {
             let mut stored_pubkeys: Vec<String> = serde_json::from_str(&pubkey_collect.pubkeys)?;
+            let pre_len = stored_pubkeys.len();
             pubkeys.append(&mut stored_pubkeys);
+            pubkeys.sort();
+            pubkeys.dedup();
+            if pubkeys.len() == pre_len {
+                warn!("input pubkeys have been stored");
+                return Ok(());
+            }
             created_at = pubkey_collect.created_at;
         }
 
@@ -625,6 +634,25 @@ impl<'a> StorageProcessor<'a> {
         committee_pubkey: String,
         partial_sigs: &[[String; COMMITTEE_PRE_SIGN_NUM]],
     ) -> anyhow::Result<()> {
+        let merge_dedup_fn = |mut source: Vec<[String; COMMITTEE_PRE_SIGN_NUM]>,
+                              mut input: Vec<[String; COMMITTEE_PRE_SIGN_NUM]>|
+         -> (bool, Vec<[String; COMMITTEE_PRE_SIGN_NUM]>) {
+            if input.is_empty() {
+                return (false, source);
+            }
+            input = input
+                .into_iter()
+                .map(|mut v| {
+                    v.sort();
+                    v
+                })
+                .collect();
+            let pre_len = source.len();
+            source.append(&mut input);
+            source.sort();
+            source.dedup();
+            (source.len() > pre_len, source)
+        };
         let nonce_collect = sqlx::query_as!(
             NonceCollect ,
             "SELECT instance_id as \"instance_id:Uuid\", graph_id as \"graph_id:Uuid\",nonces, committee_pubkey, \
@@ -635,15 +663,36 @@ impl<'a> StorageProcessor<'a> {
         let mut partial_sigs = partial_sigs.to_owned();
         let mut created_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
         let updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-        if let Some(nonce_collect) = nonce_collect {
-            let mut stored_nonces: Vec<[String; COMMITTEE_PRE_SIGN_NUM]> =
-                serde_json::from_str(&nonce_collect.nonces)?;
-            let mut stored_sigs: Vec<[String; COMMITTEE_PRE_SIGN_NUM]> =
-                serde_json::from_str(&nonce_collect.partial_sigs)?;
-            nonces.append(&mut stored_nonces);
-            partial_sigs.append(&mut stored_sigs);
+        let (nonces, partial_sigs) = if let Some(nonce_collect) = nonce_collect {
             created_at = nonce_collect.created_at;
-        }
+            let stored_nonces: Vec<[String; COMMITTEE_PRE_SIGN_NUM]> =
+                serde_json::from_str(&nonce_collect.nonces)?;
+            let stored_signs: Vec<[String; COMMITTEE_PRE_SIGN_NUM]> =
+                serde_json::from_str(&nonce_collect.partial_sigs)?;
+            let (update_nonce, nonces) = merge_dedup_fn(stored_nonces, nonces);
+            let (update_signs, partial_sigs) = merge_dedup_fn(stored_signs, partial_sigs);
+            if !(update_nonce || update_signs) {
+                warn!("nonces or partial_sigs have been stored");
+                return Ok(());
+            }
+            (nonces, partial_sigs)
+        } else {
+            nonces = nonces
+                .into_iter()
+                .map(|mut v| {
+                    v.sort();
+                    v
+                })
+                .collect();
+            partial_sigs = partial_sigs
+                .into_iter()
+                .map(|mut v| {
+                    v.sort();
+                    v
+                })
+                .collect();
+            (nonces, partial_sigs)
+        };
 
         let nonce_str = serde_json::to_string(&nonces)?;
         let signs_str = serde_json::to_string(&partial_sigs)?;
