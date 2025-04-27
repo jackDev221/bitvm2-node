@@ -39,7 +39,7 @@ impl LocalDB {
             tracing::info!("Creating database {}", path);
             match Sqlite::create_database(path).await {
                 Ok(_) => println!("Create db success"),
-                Err(error) => panic!("error: {}", error),
+                Err(error) => panic!("error: {error}"),
             }
         } else {
             tracing::info!("Database already exists");
@@ -53,7 +53,7 @@ impl LocalDB {
         match MIGRATOR.run(&self.conn).await {
             Ok(_) => tracing::info!("Migration success"),
             Err(error) => {
-                panic!("error: {}", error);
+                panic!("error: {error:?}");
             }
         }
     }
@@ -326,13 +326,13 @@ impl<'a> StorageProcessor<'a> {
         let mut conditions: Vec<String> = vec![];
 
         if let Some(status) = status {
-            conditions.push(format!("status = \'{status}\'"));
+            conditions.push(format!("graph.status = \'{status}\'"));
         }
         if let Some(operator) = operator {
-            conditions.push(format!("operator = \'{operator}\'"));
+            conditions.push(format!("graph.operator = \'{operator}\'"));
         }
         if let Some(pegin_txid) = pegin_txid {
-            conditions.push(format!("pegin_txid = \'{pegin_txid}\'"));
+            conditions.push(format!("graph.pegin_txid = \'{pegin_txid}\'"));
         }
 
         if !conditions.is_empty() {
@@ -405,10 +405,10 @@ impl<'a> StorageProcessor<'a> {
         let mut nodes_count_str = "SELECT count(*) as total_nodes FROM node".to_string();
         let mut conditions: Vec<String> = vec![];
         if let Some(actor) = actor {
-            conditions.push(format!("actor = \'{}\'", actor));
+            conditions.push(format!("actor = \'{actor}\'"));
         }
         if let Some(goat_addr) = goat_addr {
-            conditions.push(format!("goat_addr = \'{}\'", goat_addr));
+            conditions.push(format!("goat_addr = \'{goat_addr}\'"));
         }
         if let Some(status_expect) = status_expect {
             match status_expect.as_str() {
@@ -577,22 +577,26 @@ impl<'a> StorageProcessor<'a> {
             "SELECT instance_id as \"instance_id:Uuid\", pubkeys, created_at, updated_at  FROM pubkey_collect WHERE instance_id = ?",
             instance_id).fetch_optional(self.conn()).await?;
 
-        let mut pubkeys = pubkeys.to_owned();
+        let pubkeys = pubkeys.to_owned();
         let mut created_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
         let updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-        if let Some(pubkey_collect) = pubkey_collect {
+        let pubkeys = if let Some(pubkey_collect) = pubkey_collect {
             let mut stored_pubkeys: Vec<String> = serde_json::from_str(&pubkey_collect.pubkeys)?;
             let pre_len = stored_pubkeys.len();
-            pubkeys.append(&mut stored_pubkeys);
-            pubkeys.sort();
-            pubkeys.dedup();
-            if pubkeys.len() == pre_len {
+            for pubkey in pubkeys {
+                if !stored_pubkeys.contains(&pubkey) {
+                    stored_pubkeys.push(pubkey);
+                }
+            }
+            if stored_pubkeys.len() == pre_len {
                 warn!("input pubkeys have been stored");
                 return Ok(());
             }
             created_at = pubkey_collect.created_at;
-        }
-
+            stored_pubkeys
+        } else {
+            pubkeys
+        };
         let pubkeys_str = serde_json::to_string(&pubkeys)?;
         let _ = sqlx::query!(
             "INSERT OR REPLACE INTO  pubkey_collect (instance_id, pubkeys, created_at, updated_at) VALUES ( ?,?, ?,?)",
@@ -635,22 +639,19 @@ impl<'a> StorageProcessor<'a> {
         partial_sigs: &[[String; COMMITTEE_PRE_SIGN_NUM]],
     ) -> anyhow::Result<()> {
         let merge_dedup_fn = |mut source: Vec<[String; COMMITTEE_PRE_SIGN_NUM]>,
-                              mut input: Vec<[String; COMMITTEE_PRE_SIGN_NUM]>|
+                              input: Vec<[String; COMMITTEE_PRE_SIGN_NUM]>|
          -> (bool, Vec<[String; COMMITTEE_PRE_SIGN_NUM]>) {
             if input.is_empty() {
                 return (false, source);
             }
-            input = input
-                .into_iter()
-                .map(|mut v| {
-                    v.sort();
-                    v
-                })
-                .collect();
+            // source and input order never change
+            let keys: Vec<String> = source.iter().map(|v| v[0].clone()).collect();
             let pre_len = source.len();
-            source.append(&mut input);
-            source.sort();
-            source.dedup();
+            for item in input {
+                if !keys.contains(&item[0]) {
+                    source.push(item)
+                }
+            }
             (source.len() > pre_len, source)
         };
         let nonce_collect = sqlx::query_as!(
@@ -659,8 +660,8 @@ impl<'a> StorageProcessor<'a> {
             partial_sigs, created_at, updated_at  FROM nonce_collect WHERE instance_id = ? AND graph_id = ?",
             instance_id, graph_id).fetch_optional(self.conn()).await?;
 
-        let mut nonces = nonces.to_owned();
-        let mut partial_sigs = partial_sigs.to_owned();
+        let nonces = nonces.to_owned();
+        let partial_sigs = partial_sigs.to_owned();
         let mut created_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
         let updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
         let (nonces, partial_sigs) = if let Some(nonce_collect) = nonce_collect {
@@ -677,20 +678,6 @@ impl<'a> StorageProcessor<'a> {
             }
             (nonces, partial_sigs)
         } else {
-            nonces = nonces
-                .into_iter()
-                .map(|mut v| {
-                    v.sort();
-                    v
-                })
-                .collect();
-            partial_sigs = partial_sigs
-                .into_iter()
-                .map(|mut v| {
-                    v.sort();
-                    v
-                })
-                .collect();
             (nonces, partial_sigs)
         };
 
