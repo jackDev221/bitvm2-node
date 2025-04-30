@@ -1,9 +1,8 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GrapRpcQueryData, Graph, Instance, Message, Node, NodesOverview,
-    NonceCollect, NonceCollectMetaData, PubKeyCollect, PubKeyCollectMetaData,
-    RelayerCaringGraphMetaData,
+    COMMITTEE_PRE_SIGN_NUM, GrapRpcQueryData, Graph, GraphTickActionMetaData, Instance, Message,
+    Node, NodesOverview, NonceCollect, NonceCollectMetaData, PubKeyCollect, PubKeyCollectMetaData,
 };
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolConnection;
@@ -203,8 +202,8 @@ impl<'a> StorageProcessor<'a> {
         let res = sqlx::query!(
             "INSERT OR REPLACE INTO  graph (graph_id, instance_id, graph_ipfs_base_url, pegin_txid, \
              amount, status, pre_kickoff_txid, kickoff_txid, challenge_txid, take1_txid, assert_init_txid, assert_commit_txids, \
-            assert_final_txid, take2_txid, disprove_txid, raw_data, created_at, updated_at)  \
-            VALUES ( ?, ?, ?, ?, ?, ?, ?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?) ",
+            assert_final_txid, take2_txid, disprove_txid, operator, raw_data, created_at, updated_at)  \
+            VALUES ( ?, ?, ?, ?, ?, ?, ?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ",
             graph.graph_id,
             graph.instance_id,
             graph.graph_ipfs_base_url,
@@ -220,6 +219,7 @@ impl<'a> StorageProcessor<'a> {
             graph.assert_final_txid,
             graph.take2_txid,
             graph.disprove_txid,
+            graph.operator,
             graph.raw_data,
             graph.created_at,
             graph.updated_at,
@@ -521,7 +521,7 @@ impl<'a> StorageProcessor<'a> {
         current_time: i64,
     ) -> anyhow::Result<bool> {
         let query_str = format!(
-            "Update  message Set state = {state}, updated_at = {current_time} WHERE id IN ({})",
+            "Update  message Set state = \'{state}\', updated_at = {current_time} WHERE id IN ({})",
             create_place_holders(ids)
         );
         let mut query = sqlx::query(&query_str);
@@ -735,14 +735,14 @@ impl<'a> StorageProcessor<'a> {
         }
     }
 
-    pub async fn get_relayer_caring_graph_datas(
+    pub async fn get_graph_tick_action_datas(
         &mut self,
         graph_status: &str,
         msg_type: &str,
-    ) -> anyhow::Result<Vec<RelayerCaringGraphMetaData>> {
+    ) -> anyhow::Result<Vec<GraphTickActionMetaData>> {
         Ok(
             sqlx::query_as!(
-                RelayerCaringGraphMetaData,
+                GraphTickActionMetaData,
                 "SELECT graph.graph_id as \"graph_id:Uuid\", graph.instance_id as \"instance_id:Uuid\", graph.status, graph.kickoff_txid,  graph.take1_txid, \
                  graph.take2_txid, graph.assert_init_txid, graph.assert_commit_txids, graph.assert_final_txid, \
                   graph.raw_data,IFNULL(message_broadcast.msg_times, 0) as msg_times, IFNULL(message_broadcast.msg_type, '') as msg_type  \

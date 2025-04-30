@@ -6,10 +6,12 @@ use crate::chain::evmchain::EvmChain;
 use crate::chain::goat_adaptor::GoatInitConfig;
 use crate::esplora::get_esplora_url;
 use anyhow::bail;
+use bitcoin::consensus::encode::{deserialize_hex, serialize};
 use bitcoin::hashes::Hash;
 use bitcoin::{Address as BtcAddress, PublicKey, TxMerkleNode, Txid};
 use bitcoin::{Block, Network};
 use esplora_client::{AsyncClient, Builder, MerkleProof, Utxo};
+use goat::transactions::assert::utils::COMMIT_TX_NUM;
 use std::str::FromStr;
 use store::Graph;
 use store::{ipfs::IPFS, localdb::LocalDB};
@@ -62,12 +64,13 @@ impl BitVM2Client {
     pub async fn get_bitc_merkle_proof(
         &self,
         tx_id: &Txid,
-    ) -> anyhow::Result<(TxMerkleNode, MerkleProof)> {
+    ) -> anyhow::Result<(TxMerkleNode, MerkleProof, Vec<u8>)> {
         let proof = self.esplora.get_merkle_proof(tx_id).await?;
         if let Some(proof) = proof {
             let block_hash = self.esplora.get_block_hash(proof.block_height).await?;
             let header = self.esplora.get_header_by_hash(&block_hash).await?;
-            return Ok((header.merkle_root, proof));
+            let raw_header = serialize(&header);
+            return Ok((header.merkle_root, proof, raw_header));
         }
 
         bail!("get {} merkle proof is none", tx_id)
@@ -116,7 +119,7 @@ impl BitVM2Client {
     ) -> anyhow::Result<()> {
         let operator_data = self.get_operator_data(graph_id).await?;
         let tx_id_on_line = Txid::from_slice(&operator_data.kickoff_txid)?;
-        let (_root, proof, _leaf, height, index) = self
+        let (_root, proof, _leaf, height, index, raw_header) = self
             .check_withdraw_actions_and_get_proof(
                 "disprove",
                 graph_id,
@@ -128,7 +131,14 @@ impl BitVM2Client {
         let raw_kickoff_tx = self.tx_reconstruct(tx);
         self.chain_service
             .adaptor
-            .finish_withdraw_happy_path(graph_id, &raw_kickoff_tx, height, &proof, index)
+            .finish_withdraw_happy_path(
+                graph_id,
+                &raw_kickoff_tx,
+                &raw_header,
+                height,
+                &proof,
+                index,
+            )
             .await
     }
     pub async fn finish_withdraw_happy_path(
@@ -138,7 +148,7 @@ impl BitVM2Client {
     ) -> anyhow::Result<()> {
         let operator_data = self.get_operator_data(graph_id).await?;
         let tx_id_on_line = Txid::from_slice(&operator_data.take1_txid)?;
-        let (_root, proof, _leaf, height, index) = self
+        let (_root, proof, _leaf, height, index, raw_header) = self
             .check_withdraw_actions_and_get_proof(
                 "take1",
                 graph_id,
@@ -150,7 +160,7 @@ impl BitVM2Client {
         let raw_take1_tx = self.tx_reconstruct(tx);
         self.chain_service
             .adaptor
-            .finish_withdraw_happy_path(graph_id, &raw_take1_tx, height, &proof, index)
+            .finish_withdraw_happy_path(graph_id, &raw_take1_tx, &raw_header, height, &proof, index)
             .await
     }
 
@@ -161,7 +171,7 @@ impl BitVM2Client {
     ) -> anyhow::Result<()> {
         let operator_data = self.get_operator_data(graph_id).await?;
         let tx_id_on_line = Txid::from_slice(&operator_data.take2_txid)?;
-        let (_root, proof, _leaf, height, index) = self
+        let (_root, proof, _leaf, height, index, raw_header) = self
             .check_withdraw_actions_and_get_proof(
                 "take2",
                 graph_id,
@@ -173,7 +183,14 @@ impl BitVM2Client {
         let raw_take2_tx = self.tx_reconstruct(tx);
         self.chain_service
             .adaptor
-            .finish_withdraw_unhappy_path(graph_id, &raw_take2_tx, height, &proof, index)
+            .finish_withdraw_unhappy_path(
+                graph_id,
+                &raw_take2_tx,
+                &raw_header,
+                height,
+                &proof,
+                index,
+            )
             .await
     }
 
@@ -184,7 +201,7 @@ impl BitVM2Client {
     ) -> anyhow::Result<()> {
         let operator_data = self.get_operator_data(graph_id).await?;
         let tx_id_on_line = Txid::from_slice(&operator_data.assert_final_txid)?;
-        let (_root, proof, _leaf, height, index) = self
+        let (_root, proof, _leaf, height, index, raw_header) = self
             .check_withdraw_actions_and_get_proof(
                 "disprove",
                 graph_id,
@@ -196,7 +213,14 @@ impl BitVM2Client {
         let raw_disprove_tx = self.tx_reconstruct(tx);
         self.chain_service
             .adaptor
-            .finish_withdraw_disproved(graph_id, &raw_disprove_tx, height, &proof, index)
+            .finish_withdraw_disproved(
+                graph_id,
+                &raw_disprove_tx,
+                &raw_header,
+                height,
+                &proof,
+                index,
+            )
             .await
     }
 
@@ -210,46 +234,55 @@ impl BitVM2Client {
             bail!("instance_id:{} pegin tx already posted", instance_id);
         }
         let tx_id = tx.compute_txid();
-        if !self.chain_service.adaptor.pegin_tx_used(&tx_id.to_byte_array()).await? {
+        if self.chain_service.adaptor.pegin_tx_used(&tx_id.to_byte_array()).await? {
             tracing::warn!("instance_id:{} this pegin tx has already been posted", instance_id,);
             bail!("instance_id:{} this pegin tx has already been posted", instance_id,);
         }
-        let (root, proof, _leaf, height, index) = self.get_btc_tx_proof_info(&tx_id).await?;
-        let root_online = self.get_block_hash(height).await?;
-        if root_online != root {
+        let (root, proof, _leaf, height, index, raw_header) =
+            self.get_btc_tx_proof_info(&tx_id).await?;
+
+        let (block_hash, merkle_root) =
+            self.chain_service.adaptor.parse_btc_block_header(&raw_header).await?;
+        let block_hash_online = self.get_block_hash(height).await?;
+        if block_hash_online != block_hash {
             tracing::warn!(
-                "instance_id:{}   root mismatch, from chain:{},  in contract:{}",
+                "instance_id:{}   invalid header, from chain:{},  in contract:{}",
                 instance_id,
-                hex::encode(root),
-                hex::encode(root_online)
+                hex::encode(block_hash),
+                hex::encode(block_hash_online)
             );
             bail!(
                 "instance_id:{}  root mismatch, from chain:{},  in contract:{}",
                 instance_id,
-                hex::encode(root),
-                hex::encode(root_online)
+                hex::encode(block_hash),
+                hex::encode(block_hash_online)
+            );
+        }
+
+        if merkle_root != root {
+            tracing::warn!(
+                "instance_id:{}   invalid header encoder merkle_root not equal: decode: {},  generate:{}",
+                instance_id,
+                hex::encode(merkle_root),
+                hex::encode(root)
+            );
+            bail!(
+                "instance_id:{}   invalid header encoder merkle_root not equal: decode: {},  generate:{}",
+                instance_id,
+                hex::encode(merkle_root),
+                hex::encode(root)
             );
         }
         // check proof
-        if self.verify_merkle_proof(&root_online, &proof, &tx_id.to_byte_array(), index).await? {
-            tracing::warn!(
-                "instance_id:{} root mismatch, from chain:{},  in contract:{}",
-                instance_id,
-                hex::encode(root),
-                hex::encode(root_online)
-            );
-            bail!(
-                "instance_id:{}  root mismatch, from chain:{},  in contract:{}",
-                instance_id,
-                hex::encode(root),
-                hex::encode(root_online)
-            );
+        if !self.verify_merkle_proof(&merkle_root, &proof, &tx_id.to_byte_array(), index).await? {
+            tracing::warn!("instance_id:{} check proof failed", instance_id,);
+            bail!("instance_id:{} check proof failed", instance_id,);
         }
-        let raw_pegin_tx = self.tx_reconstruct(tx);
 
+        let raw_pegin_tx = self.tx_reconstruct(tx);
         self.chain_service
             .adaptor
-            .post_pegin_data(instance_id, &raw_pegin_tx, height, &proof, index)
+            .post_pegin_data(instance_id, &raw_pegin_tx, &raw_header, height, &proof, index)
             .await
     }
 
@@ -302,7 +335,7 @@ impl BitVM2Client {
         tx_act: &Txid,
         tx_id_on_line: &Txid,
         status: WithdrawStatus,
-    ) -> anyhow::Result<([u8; 32], Vec<[u8; 32]>, [u8; 32], u64, u64)> {
+    ) -> anyhow::Result<([u8; 32], Vec<[u8; 32]>, [u8; 32], u64, u64, Vec<u8>)> {
         // check tx id match
         if tx_id_on_line.ne(tx_act) {
             tracing::warn!(
@@ -328,50 +361,59 @@ impl BitVM2Client {
             bail!("graph:{} at {} not at processing stage", tag, graph_id);
         };
         // check hash in btc chain and spv contract
-        let (root, proof, leaf, height, index) = self.get_btc_tx_proof_info(tx_act).await?;
+        let (root, proof, leaf, height, index, raw_header) =
+            self.get_btc_tx_proof_info(tx_act).await?;
 
-        let root_online = self.get_block_hash(height).await?;
-        if root_online != root {
+        let (block_hash, merkle_root) =
+            self.chain_service.adaptor.parse_btc_block_header(&raw_header).await?;
+        let block_hash_online = self.get_block_hash(height).await?;
+        if block_hash_online != block_hash {
             tracing::warn!(
-                "graph:{} at {}  root mismatch, from chain:{},  in contract:{}",
-                tag,
+                "graph_id:{} at: {} invalid header, from chain:{},  in contract:{}",
                 graph_id,
-                hex::encode(root),
-                hex::encode(root_online)
+                tag,
+                hex::encode(block_hash),
+                hex::encode(block_hash_online)
             );
             bail!(
-                "graph:{} at {} root mismatch, from chain:{},  in contract:{}",
-                tag,
+                "graph_id:{} at :{} root mismatch, from chain:{},  in contract:{}",
                 graph_id,
-                hex::encode(root),
-                hex::encode(root_online)
+                tag,
+                hex::encode(block_hash),
+                hex::encode(block_hash_online)
             );
         }
+
+        if merkle_root != root {
+            tracing::warn!(
+                "graph_id:{} at: {}  invalid header encoder merkle_root not equal: decode: {},  generate:{}",
+                graph_id,
+                tag,
+                hex::encode(merkle_root),
+                hex::encode(root)
+            );
+            bail!(
+                "graph_id:{} at :{}  invalid header encoder merkle_root not equal: decode: {},  generate:{}",
+                graph_id,
+                tag,
+                hex::encode(merkle_root),
+                hex::encode(root)
+            );
+        }
+
         // check proof
-        if self.verify_merkle_proof(&root_online, &proof, &tx_act.to_byte_array(), index).await? {
-            tracing::warn!(
-                "graph:{} at {} root mismatch, from chain:{},  in contract:{}",
-                tag,
-                graph_id,
-                hex::encode(root),
-                hex::encode(root_online)
-            );
-            bail!(
-                "graph:{} at {} root mismatch, from chain:{},  in contract:{}",
-                tag,
-                graph_id,
-                hex::encode(root),
-                hex::encode(root_online)
-            );
+        if !self.verify_merkle_proof(&merkle_root, &proof, &tx_act.to_byte_array(), index).await? {
+            tracing::warn!("graph:{} at {} verify_merkle_proof failed ", tag, graph_id,);
+            bail!("graph:{} at {} verify_merkle_proof failed ", tag, graph_id,);
         }
 
-        Ok((root, proof, leaf, height, index))
+        Ok((root, proof, leaf, height, index, raw_header))
     }
     pub async fn get_btc_tx_proof_info(
         &self,
         tx_id: &Txid,
-    ) -> anyhow::Result<([u8; 32], Vec<[u8; 32]>, [u8; 32], u64, u64)> {
-        let (root, proof_info) = self.get_bitc_merkle_proof(tx_id).await?;
+    ) -> anyhow::Result<([u8; 32], Vec<[u8; 32]>, [u8; 32], u64, u64, Vec<u8>)> {
+        let (root, proof_info, raw_header) = self.get_bitc_merkle_proof(tx_id).await?;
         let proof: Vec<[u8; 32]> = proof_info.merkle.iter().map(|v| v.to_byte_array()).collect();
         let leaf = tx_id.to_byte_array();
         Ok((
@@ -380,6 +422,7 @@ impl BitVM2Client {
             leaf,
             proof_info.block_height as u64,
             proof_info.pos as u64,
+            raw_header,
         ))
     }
 
@@ -404,10 +447,9 @@ impl BitVM2Client {
         }
         let assert_commit_txid_strs: Vec<String> =
             serde_json::from_str(&graph.assert_commit_txids.clone().unwrap())?;
-        let mut assert_commit_txids: [[u8; 32]; 4] = [[0; 32]; 4];
-        for i in 0..4 {
-            assert_commit_txids[i] =
-                Txid::from_str(assert_commit_txid_strs[i].as_str())?.to_byte_array();
+        let mut assert_commit_txids: [[u8; 32]; COMMIT_TX_NUM] = [[0; 32]; COMMIT_TX_NUM];
+        for i in 0..COMMIT_TX_NUM {
+            assert_commit_txids[i] = deserialize_hex(&assert_commit_txid_strs[i])?;
         }
         let pubkey_vec = PublicKey::from_str(&graph.operator)?.to_bytes();
 
@@ -415,17 +457,14 @@ impl BitVM2Client {
             stake_amount: graph.amount as u64,
             operator_pubkey_prefix: pubkey_vec[0],
             operator_pubkey: pubkey_vec[1..33].try_into()?,
-            pegin_txid: Txid::from_str(&graph.pegin_txid)?.to_byte_array(),
-            pre_kickoff_txid: Txid::from_str(&graph.pre_kickoff_txid.clone().unwrap())?
-                .to_byte_array(),
-            kickoff_txid: Txid::from_str(&graph.kickoff_txid.clone().unwrap())?.to_byte_array(),
-            take1_txid: Txid::from_str(&graph.take1_txid.clone().unwrap())?.to_byte_array(),
-            assert_init_txid: Txid::from_str(&graph.assert_init_txid.clone().unwrap())?
-                .to_byte_array(),
+            pegin_txid: deserialize_hex(&graph.pegin_txid)?,
+            pre_kickoff_txid: deserialize_hex(&graph.pre_kickoff_txid.clone().unwrap())?,
+            kickoff_txid: deserialize_hex(&graph.kickoff_txid.clone().unwrap())?,
+            take1_txid: deserialize_hex(&graph.take1_txid.clone().unwrap())?,
+            assert_init_txid: deserialize_hex(&graph.assert_init_txid.clone().unwrap())?,
             assert_commit_txids,
-            assert_final_txid: Txid::from_str(&graph.assert_final_txid.clone().unwrap())?
-                .to_byte_array(),
-            take2_txid: Txid::from_str(&graph.take2_txid.clone().unwrap())?.to_byte_array(),
+            assert_final_txid: deserialize_hex(&graph.assert_final_txid.clone().unwrap())?,
+            take2_txid: deserialize_hex(&graph.take2_txid.clone().unwrap())?,
         })
     }
 }
