@@ -2,7 +2,7 @@ use crate::types::{
     Bitvm2Graph, Groth16WotsPublicKeys, Groth16WotsSignatures, VerifyingKey, WotsPublicKeys,
 };
 use anyhow::{Result, bail};
-use bitcoin::{Address, Amount, Transaction};
+use bitcoin::{Address, Amount, Transaction, XOnlyPublicKey};
 use bitvm::chunk::api::{
     NUM_TAPS,
     type_conversion_utils::{RawWitness, script_to_witness, utils_signatures_from_raw_witnesses},
@@ -46,16 +46,16 @@ pub fn sign_disprove(
     disprove_scripts_bytes: Vec<Vec<u8>>,
     assert_wots_pubkeys: &Groth16WotsPublicKeys,
     reward_address: Address,
+    fee_rate: f64,
 ) -> Result<Transaction> {
     if !graph.committee_pre_signed() {
         bail!("missing pre-signatures from committee".to_string())
     };
-    let context = graph.parameters.get_base_context();
     let assert_wots_commitment_keys =
         convert_to_connector_c_commits_public_key(assert_wots_pubkeys);
     let connector_c = ConnectorC::new_from_scripts(
-        context.network,
-        &context.n_of_n_taproot_public_key,
+        graph.parameters.network,
+        &XOnlyPublicKey::from(graph.parameters.operator_pubkey),
         assert_wots_commitment_keys,
         disprove_scripts_bytes,
     );
@@ -64,6 +64,7 @@ pub fn sign_disprove(
         disprove_witness.0 as u32,
         script_to_witness(disprove_witness.1),
         reward_address.script_pubkey(),
+        fee_rate,
     );
     Ok(graph.disprove.finalize())
 }
