@@ -1,3 +1,5 @@
+use crate::committee::{COMMITTEE_PRE_SIGN_NUM, push_committee_pre_signatures};
+use crate::operator::push_operator_pre_signature;
 use anyhow::Result;
 use bitcoin::{Address, Amount, Network, PrivateKey, PublicKey, XOnlyPublicKey, key::Keypair};
 use bitcoin::{OutPoint, TapNodeHash, Witness};
@@ -28,9 +30,6 @@ use rand::{Rng, distributions::Alphanumeric};
 use secp256k1::SECP256K1;
 use serde::{Deserialize, Serialize};
 
-use crate::committee::{COMMITTEE_PRE_SIGN_NUM, push_committee_pre_signatures};
-use crate::operator::push_operator_pre_signature;
-
 pub type VerifyingKey = ark_groth16::VerifyingKey<ark_bn254::Bn254>;
 pub type Groth16Proof = ark_groth16::Proof<ark_bn254::Bn254>;
 pub type PublicInputs = Vec<ark_bn254::Fr>;
@@ -50,7 +49,7 @@ pub fn random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(&Alphanumeric).take(len).map(char::from).collect()
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Bitvm2Parameters {
     pub network: Network,
     pub depositor_evm_address: [u8; 20],
@@ -115,7 +114,7 @@ impl Bitvm2Parameters {
     }
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Bitvm2Graph {
     pub(crate) operator_pre_signed: bool,
     pub(crate) committee_pre_signed: bool,
@@ -133,7 +132,7 @@ pub struct Bitvm2Graph {
     pub disprove: DisproveTransaction,
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct SimplifiedBitvm2Graph {
     pub parameters: Bitvm2Parameters,
     pub operator_pre_sigs: Option<Witness>,
@@ -343,7 +342,7 @@ impl Bitvm2Graph {
     }
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct CustomInputs {
     pub inputs: Vec<Input>,
     /// stake amount / pegin_amount

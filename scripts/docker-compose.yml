@@ -1,0 +1,40 @@
+services:
+  bitcoind:
+    image: ruimarinho/bitcoin-core
+    container_name: bitcoind
+    restart: unless-stopped
+    volumes:
+      - ./bitcoin-data:/bitcoin
+      - ./bitcoin-init.sh:/usr/local/bin/bitcoin-init.sh
+    entrypoint: ["/bin/bash", "/usr/local/bin/bitcoin-init.sh"]
+    ports:
+      - "18443:18443"
+      - "18444:18444"
+    networks:
+      - regtest
+
+  electrs:
+    image: mempool/electrs
+    container_name: electrs-regtest
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    depends_on:
+      - bitcoind
+    entrypoint: >
+      electrs
+        --network regtest
+        --daemon-rpc-addr bitcoind:18443
+        --daemon-dir /bitcoin
+        --http-addr 0.0.0.0:3002
+        --cookie "111111:111111"
+        -v
+    volumes:
+      - ./electrs-data:/data
+      - ./bitcoin-data:/bitcoin
+    networks:
+      - regtest
+networks:
+  regtest:
+    # Specify driver options
+    driver: bridge

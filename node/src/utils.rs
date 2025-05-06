@@ -228,14 +228,15 @@ pub fn get_partial_scripts() -> Result<Vec<Script>, Box<dyn std::error::Error>> 
 }
 
 pub async fn get_fee_rate(client: &BitVM2Client) -> Result<f64, Box<dyn std::error::Error>> {
-    if client.btc_network == Network::Testnet {
+    match client.btc_network {
         //TODO mempool api /fee-estimates failed, fix it latter
-        Ok(1.0)
-    } else {
-        let res = client.esplora.get_fee_estimates().await?;
-        Ok(*res.get(&DEFAULT_CONFIRMATION_TARGET).ok_or(format!(
-            "fee for {DEFAULT_CONFIRMATION_TARGET} confirmation target not found"
-        ))?)
+        Network::Testnet | Network::Regtest => Ok(1.0),
+        _ => {
+            let res = client.esplora.get_fee_estimates().await?;
+            Ok(*res.get(&DEFAULT_CONFIRMATION_TARGET).ok_or(format!(
+                "fee for {DEFAULT_CONFIRMATION_TARGET} confirmation target not found"
+            ))?)
+        }
     }
 }
 
@@ -445,6 +446,7 @@ pub async fn get_proper_utxo_set(
             })
             .collect()
     }
+    println!("get utxos from: {address}");
 
     let utxos = client.esplora.get_address_utxo(address).await?;
     let mut sorted_utxos = utxos;
@@ -494,12 +496,12 @@ pub fn node_sign(
     sighash_type: EcdsaSighashType,
     node_keypair: &Keypair,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let node_pubkey: PublicKey = node_keypair.public_key().into();
+    let node_pubkey = node_keypair.public_key();
     populate_p2wsh_witness(
         tx,
         input_index,
         sighash_type,
-        &node_p2wsh_script(&node_pubkey),
+        &node_p2wsh_script(&node_pubkey.into()),
         input_value,
         &vec![node_keypair],
     );
@@ -1055,27 +1057,48 @@ pub mod defer {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::action::{CreateInstance, GOATMessageContent, KickoffReady};
 
     use super::*;
+    use bitcoin::Address;
+    use bitvm::chunk::api::{NUM_HASH, NUM_PUBS, NUM_U256};
+    use bitvm::signatures::wots_api::{HASH_LEN, wots_hash, wots256};
+    use bitvm2_lib::types::{Groth16WotsSecretKeys, Groth16WotsSignatures};
     use client::chain::{chain_adaptor::GoatNetwork, goat_adaptor::GoatInitConfig};
     use goat::connectors::base::generate_default_tx_in;
-    use reqwest::Url;
     use serial_test::serial;
     use std::fmt;
 
+    pub fn corrupt(
+        proof_sigs: &mut Groth16WotsSignatures,
+        wots_sec: &Groth16WotsSecretKeys,
+        index: usize,
+    ) {
+        let mut scramble: [u8; 32] = [1u8; 32];
+        scramble[16] = 37;
+        let mut scramble2: [u8; HASH_LEN as usize] = [1u8; HASH_LEN as usize];
+        scramble2[HASH_LEN as usize / 2] = 37;
+        println!("corrupted assertion at index {index}");
+        if index < NUM_PUBS {
+            let i = index;
+            let assn = scramble;
+            let sig = wots256::get_signature(&wots_sec[index], &assn);
+            proof_sigs.0[i] = sig;
+        } else if index < NUM_PUBS + NUM_U256 {
+            let i = index - NUM_PUBS;
+            let assn = scramble;
+            let sig = wots256::get_signature(&wots_sec[index], &assn);
+            proof_sigs.1[i] = sig;
+        } else if index < NUM_PUBS + NUM_U256 + NUM_HASH {
+            let i = index - NUM_PUBS - NUM_U256;
+            let assn = scramble2;
+            let sig = wots_hash::get_signature(&wots_sec[index], &assn);
+            proof_sigs.2[i] = sig;
+        }
+    }
     async fn test_client() -> BitVM2Client {
-        let global_init_config = GoatInitConfig {
-            rpc_url: "https://rpc.testnet3.goat.network".parse::<Url>().expect("decode url"),
-            gateway_address: "0xeD8AeeD334fA446FA03Aa00B28aFf02FA8aC02df"
-                .parse()
-                .expect("parse contract address"),
-            gateway_creation_block: 0,
-            to_block: None,
-            private_key: None,
-            chain_id: 48816_u32,
-        };
+        let global_init_config = GoatInitConfig::from_env_for_test();
         //  let local_db = LocalDB::new(&format!("sqlite:{db_path}"), true).await;
         let tmp_db = tempfile::NamedTempFile::new().unwrap();
         BitVM2Client::new(
@@ -1626,16 +1649,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "debug"]
     async fn load_graph() {
-        let global_init_config = GoatInitConfig {
-            rpc_url: "https://rpc.testnet3.goat.network".parse::<Url>().expect("decode url"),
-            gateway_address: "0xeD8AeeD334fA446FA03Aa00B28aFf02FA8aC02df"
-                .parse()
-                .expect("parse contract address"),
-            gateway_creation_block: 0,
-            to_block: None,
-            private_key: None,
-            chain_id: 48816_u32,
-        };
+        let global_init_config = GoatInitConfig::from_env_for_test();
         let client = BitVM2Client::new(
             "/tmp/bitvm2-node-0.db",
             None,
@@ -1647,6 +1661,10 @@ mod tests {
         .await;
         let instance_id = Uuid::parse_str("85b378bc-1b2a-4c59-a116-bdf3fbdf14e0").unwrap();
         let graph_id = Uuid::parse_str("ca010566-d7a7-49c8-8c62-9ddb8dd988ec").unwrap();
+
+        // store a graph
+
+        // retrieve the graph
         let graph = get_graph(&client, instance_id, graph_id).await.unwrap();
         let stake_amount = graph.parameters.stake_amount.to_sat();
 

@@ -16,7 +16,7 @@ jobs:
     name: Rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
@@ -31,7 +31,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
@@ -47,5 +47,8 @@ jobs:
         toolchain:
           - nightly
     steps:
-      - uses: actions/checkout@v2
-      - run: GOAT_CHAIN_URL=https://rpc.testnet3.goat.network GOAT_GATEWAY_CONTRACT_ADDRESS=0xeD8AeeD334fA446FA03Aa00B28aFf02FA8aC02df GOAT_GATEWAY_CONTRACT_CREATION=0 GOAT_CHAIN_ID=48816 cargo test -r
+      - uses: actions/checkout@v4
+      - name: Launch the Regtest
+        run: cd scripts && docker compose up -d
+      - name: Run all unit tests
+        run: cargo test -r --features tests

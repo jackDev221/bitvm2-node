@@ -24,6 +24,7 @@ mod metrics_service;
 mod middleware;
 mod relayer_action;
 mod rpc_service;
+mod tests;
 mod utils;
 
 use crate::action::GOATMessage;
@@ -217,7 +218,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None,
         env::get_network(),
         env::get_goat_network(),
-        env::get_bitvm2_client_config(),
+        env::goat_config_from_env(),
         &ipfs_url,
     )
     .await;

@@ -16,8 +16,6 @@ use goat::transactions::{assert::utils::COMMIT_TX_NUM, pre_signed::PreSignedTran
 use libp2p::gossipsub::MessageId;
 use libp2p::{PeerId, Swarm, gossipsub};
 use musig2::{AggNonce, PartialSignature, PubNonce, SecNonce};
-use reqwest::Request;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use store::GraphStatus;
 use uuid::Uuid;
@@ -751,13 +749,14 @@ pub async fn recv_and_dispatch(
                 let disprove_scripts_bytes =
                     disprove_scripts.iter().map(|x| x.clone().compile().into_bytes()).collect();
                 let assert_wots_pubkeys = graph.parameters.operator_wots_pubkeys.1.clone();
+                let fee_rate = get_fee_rate(client).await?;
                 let disprove_tx = sign_disprove(
                     &mut graph,
                     disprove_witness,
                     disprove_scripts_bytes,
                     &assert_wots_pubkeys,
                     disprove_reward_address()?,
-                    get_fee_rate(client).await?,
+                    fee_rate,
                 )?;
                 let disprove_txid = disprove_tx.compute_txid();
                 broadcast_tx(client, &disprove_tx).await?;
@@ -1016,27 +1015,4 @@ pub(crate) fn send_to_peer(
     let actor = message.actor.to_string();
     let gossipsub_topic = gossipsub::IdentTopic::new(actor);
     Ok(swarm.behaviour_mut().gossipsub.publish(gossipsub_topic, serde_json::to_vec(&message)?)?)
-}
-
-///  call the rpc service
-///     Method::GET/POST/PUT
-#[allow(dead_code)]
-pub(crate) async fn inner_rpc<S, R>(
-    addr: &str,
-    method: reqwest::Method,
-    uri: &str,
-    params: S,
-) -> Result<R, Box<dyn std::error::Error>>
-where
-    S: Serialize,
-    R: DeserializeOwned,
-{
-    let client = reqwest::Client::new();
-    let url = reqwest::Url::parse(&format!("{addr}/{uri}"))?;
-
-    let req = Request::new(method, url);
-    let req_builder = reqwest::RequestBuilder::from_parts(client, req);
-    let resp = req_builder.json(&params).send().await?;
-    let txt = resp.text().await?;
-    Ok(serde_json::from_str(txt.as_str())?)
 }
