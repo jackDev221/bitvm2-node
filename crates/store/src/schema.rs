@@ -27,6 +27,8 @@ pub struct NodesOverview {
     pub offline_challenger: i64,
     pub online_committee: i64,
     pub offline_committee: i64,
+    pub online_relayer: i64,
+    pub offline_relayer: i64,
 }
 
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
@@ -80,6 +82,7 @@ pub enum GraphStatus {
     #[default]
     OperatorPresigned,
     CommitteePresigned,
+    OperatorDataPushed,
     KickOffing,
     KickOff,
     Challenging,
@@ -99,6 +102,7 @@ impl FromStr for GraphStatus {
         match s {
             "OperatorPresigned" => Ok(GraphStatus::OperatorPresigned),
             "CommitteePresigned" => Ok(GraphStatus::CommitteePresigned),
+            "OperatorDataPushed" => Ok(GraphStatus::OperatorDataPushed),
             "KickOffing" => Ok(GraphStatus::KickOffing),
             "KickOff" => Ok(GraphStatus::KickOff),
             "Challenging" => Ok(GraphStatus::Challenging),
@@ -223,7 +227,7 @@ pub fn modify_graph_status(
 ) -> String {
     if last_updated_at + interval < current_time {
         match ori_status {
-            "CommitteePresigned" => "KickOffing".to_string(),
+            "OperatorDataPushed" => "KickOffing".to_string(),
             "KickOff" => "Challenging".to_string(),
             "Challenge" => "Asserting".to_string(),
             "Assert" => "Disproving".to_string(),
@@ -245,7 +249,7 @@ pub struct GrapRpcQueryData {
     pub to_addr: String,
     pub amount: i64,
     pub pegin_txid: String,
-    pub status: String, // GraphStatus
+    pub status: String, // GraphStatus | InstanceStatus
     pub kickoff_txid: Option<String>,
     pub challenge_txid: Option<String>,
     pub take1_txid: Option<String>,

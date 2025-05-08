@@ -488,6 +488,7 @@ pub fn node_p2wsh_script(pubkey: &PublicKey) -> ScriptBuf {
 pub fn node_p2wsh_address(network: Network, pubkey: &PublicKey) -> Address {
     Address::p2wsh(&node_p2wsh_script(pubkey), network)
 }
+
 pub fn node_sign(
     tx: &mut Transaction,
     input_index: usize,
@@ -851,13 +852,7 @@ pub async fn update_graph_fields(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut storage_process = client.local_db.acquire().await?;
     Ok(storage_process
-        .update_graph_status_or_ipfs_base(
-            graph_id,
-            graph_state,
-            ipfs_base_url,
-            challenge_txid,
-            disprove_txid,
-        )
+        .update_graph_fields(graph_id, graph_state, ipfs_base_url, challenge_txid, disprove_txid)
         .await?)
 }
 pub async fn store_graph(
