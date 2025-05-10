@@ -11,6 +11,8 @@ use bitvm2_lib::keys::NodeMasterKey;
 use client::chain::{chain_adaptor::GoatNetwork, goat_adaptor::GoatInitConfig};
 use reqwest::Url;
 use std::str::FromStr;
+
+pub const ENV_BITVM2_NETWORK: &str = "BITVM2_NETWORK";
 pub const ENV_GOAT_CHAIN_URL: &str = "GOAT_CHAIN_URL";
 pub const ENV_GOAT_GATEWAY_CONTRACT_ADDRESS: &str = "GOAT_GATEWAY_CONTRACT_ADDRESS";
 pub const ENV_GOAT_GATEWAY_CONTRACT_CREATION: &str = "GOAT_GATEWAY_CONTRACT_CREATION";
@@ -80,6 +82,10 @@ pub fn get_node_pubkey() -> Result<PublicKey, Box<dyn std::error::Error>> {
 }
 
 pub fn get_local_node_info() -> NodeInfo {
+    let bitvm2_network = BitVM2Network::from_str(
+        std::env::var(ENV_BITVM2_NETWORK).unwrap_or("develop".to_string()).as_str(),
+    )
+    .unwrap();
     let actor =
         Actor::from_str(std::env::var(ENV_ACTOR).unwrap_or("Challenger".to_string()).as_str())
             .unwrap();
@@ -103,6 +109,13 @@ pub fn get_local_node_info() -> NodeInfo {
     };
     if actor == Actor::Operator && goat_address.is_none() {
         panic!("Operator must set goat address or goat secret key");
+    }
+
+    if actor == Actor::Committee {
+        let committee_pubkeys = get_committee_pubkeys(bitvm2_network);
+        if !committee_pubkeys.contains(&pubkey.to_string()) {
+            panic!("Invalidate committee pubkey");
+        }
     }
 
     NodeInfo {
@@ -130,7 +143,6 @@ pub enum IpfsTxName {
     Take1,
     Take2,
 }
-
 impl IpfsTxName {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -146,6 +158,27 @@ impl IpfsTxName {
             IpfsTxName::Pegin => "pegin.hex",
             IpfsTxName::Take1 => "take1.hex",
             IpfsTxName::Take2 => "take2.hex",
+        }
+    }
+}
+
+impl FromStr for IpfsTxName {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "assert-commit0.hex" => Ok(IpfsTxName::AssertCommit0),
+            "assert-commit1.hex" => Ok(IpfsTxName::AssertCommit1),
+            "assert-commit2.hex" => Ok(IpfsTxName::AssertCommit2),
+            "assert-commit3.hex" => Ok(IpfsTxName::AssertCommit3),
+            "assert-final.hex" => Ok(IpfsTxName::AssertFinal),
+            "assert-init.hex" => Ok(IpfsTxName::AssertInit),
+            "challenge.hex" => Ok(IpfsTxName::Challenge),
+            "disprove.hex" => Ok(IpfsTxName::Disprove),
+            "kickoff.hex" => Ok(IpfsTxName::Kickoff),
+            "pegin.hex" => Ok(IpfsTxName::Pegin),
+            "take1.hex" => Ok(IpfsTxName::Take1),
+            "take2.hex" => Ok(IpfsTxName::Take2),
+            _ => Err(()),
         }
     }
 }
@@ -188,5 +221,46 @@ pub fn goat_config_from_env() -> GoatInitConfig {
         to_block,
         private_key,
         chain_id,
+    }
+}
+
+#[derive(Debug)]
+pub enum BitVM2Network {
+    Main,
+    Test,
+    Develop,
+}
+impl FromStr for BitVM2Network {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Main" => Ok(BitVM2Network::Main),
+            "Test" => Ok(BitVM2Network::Test),
+            "Develop" => Ok(BitVM2Network::Develop),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for BitVM2Network {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+pub fn get_committee_pubkeys(network: BitVM2Network) -> Vec<String> {
+    match network {
+        BitVM2Network::Main => {
+            vec![]
+        }
+        BitVM2Network::Test => {
+            vec![]
+        }
+        BitVM2Network::Develop => {
+            vec![
+                "02452556ed6dbac394cbb7441fbaf06c446d1321467fa5a138895c6c9e246793dd".to_string(),
+                "026cc14f56ad7e8fdb323378287895c6c0bcdbb37714c74fba175a0c5f0cd0d56f".to_string(),
+            ]
+        }
     }
 }

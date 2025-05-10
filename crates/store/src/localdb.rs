@@ -1,15 +1,16 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GrapRpcQueryData, Graph, GraphTickActionMetaData, Instance, Message,
-    MessageBroadcast, Node, NodesOverview, NonceCollect, NonceCollectMetaData, PubKeyCollect,
-    PubKeyCollectMetaData,
+    BridgeInStatus, COMMITTEE_PRE_SIGN_NUM, GrapRpcQueryData, Graph, GraphTickActionMetaData,
+    Instance, Message, MessageBroadcast, Node, NodesOverview, NonceCollect, NonceCollectMetaData,
+    PubKeyCollect, PubKeyCollectMetaData,
 };
 use anyhow::bail;
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolConnection;
 use sqlx::types::Uuid;
 use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction, migrate::MigrateDatabase};
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
@@ -144,7 +145,7 @@ impl<'a> StorageProcessor<'a> {
         from_addr: Option<String>,
         bridge_path: Option<u8>,
         status: Option<String>,
-        earliest_created: Option<i64>,
+        earliest_updated: Option<i64>,
         offset: Option<u32>,
         limit: Option<u32>,
     ) -> anyhow::Result<(Vec<Instance>, i64)> {
@@ -165,8 +166,8 @@ impl<'a> StorageProcessor<'a> {
             conditions.push(format!("bridge_path = {bridge_path}"));
         }
 
-        if let Some(earliest_created) = earliest_created {
-            conditions.push(format!("created_at >= {earliest_created}"));
+        if let Some(earliest_updated) = earliest_updated {
+            conditions.push(format!("updated_at >= {earliest_updated}"));
         }
         if !conditions.is_empty() {
             let condition_str = conditions.join(" AND ");
@@ -250,7 +251,7 @@ impl<'a> StorageProcessor<'a> {
         &mut self,
         instance_id: &Uuid,
         status: Option<String>,
-        pegin_txid: Option<String>,
+        pegin_tx_info: Option<(String, i64)>,
         goat_txid: Option<String>,
     ) -> anyhow::Result<()> {
         let instance_option = sqlx::query_as!(
@@ -267,15 +268,21 @@ impl<'a> StorageProcessor<'a> {
         }
         let instance = instance_option.unwrap();
         let status = if let Some(status) = status { status } else { instance.status };
-        let pegin_txid = if pegin_txid.is_some() { pegin_txid } else { instance.pegin_txid };
+
+        let (pegin_txid, fee) = if let Some((pegin_txid, fee)) = pegin_tx_info {
+            (Some(pegin_txid), fee)
+        } else {
+            (instance.pegin_txid, instance.fee)
+        };
         let goat_txid =
             if let Some(goat_txid) = goat_txid { goat_txid } else { instance.goat_txid };
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
         let _ = sqlx::query!(
-            "UPDATE instance SET status =?, pegin_txid =?, goat_txid = ?, updated_at = ? WHERE instance_id = ?",
+            "UPDATE instance SET status =?, pegin_txid =?, goat_txid = ?, fee = ?, updated_at = ? WHERE instance_id = ?",
             status,
             pegin_txid,
             goat_txid,
+            fee,
             current_time,
             instance_id
         )
@@ -336,7 +343,18 @@ impl<'a> StorageProcessor<'a> {
         &mut self,
         mut params: FilterGraphParams,
     ) -> anyhow::Result<(Vec<GrapRpcQueryData>, i64)> {
-        let status_filed = if params.is_bridge_out { "graph.status" } else { "instance.status" };
+        let is_instance_status = if let Some(status) = params.status.clone() {
+            BridgeInStatus::from_str(&status).is_ok()
+        } else {
+            false
+        };
+        // default return graph status.
+        let status_filed =
+            if (!params.is_bridge_out && params.from_addr.is_some()) || is_instance_status {
+                "instance.status"
+            } else {
+                "graph.status"
+            };
 
         let mut graph_query_str = format!(
             "SELECT graph.graph_id, graph.instance_id, instance.bridge_path AS  bridge_path, {status_filed} AS status, \
@@ -397,7 +415,7 @@ impl<'a> StorageProcessor<'a> {
         }
 
         if params.is_bridge_out && params.status.is_none() {
-            conditions.push("graph.status NOT IN (\'OperatorPresigned\',\'CommitteePresigned\',\'OperatorDataPushed\' )".to_string());
+            conditions.push("graph.status NOT IN (\'OperatorPresigned\',\'CommitteePresigned\',\'OperatorDataPushed\')".to_string());
         }
 
         if !conditions.is_empty() {
@@ -406,6 +424,8 @@ impl<'a> StorageProcessor<'a> {
             graph_count_str = format!("{graph_count_str} WHERE {condition_str}");
         }
 
+        graph_query_str = format!("{graph_query_str} ORDER BY graph.created_at DESC ");
+
         if let Some(limit) = params.limit {
             graph_query_str = format!("{graph_query_str} LIMIT {limit}");
         }
@@ -413,6 +433,7 @@ impl<'a> StorageProcessor<'a> {
         if let Some(offset) = params.offset {
             graph_query_str = format!("{graph_query_str} OFFSET {offset}");
         }
+        tracing::info!("{graph_query_str}");
         let graphs = sqlx::query_as::<_, GrapRpcQueryData>(graph_query_str.as_str())
             .fetch_all(self.conn())
             .await?;
@@ -568,16 +589,23 @@ impl<'a> StorageProcessor<'a> {
         Ok(res)
     }
 
-    pub async fn get_sum_bridge_in_or_out(
-        &mut self,
-        bridge_path: u8,
-    ) -> anyhow::Result<(i64, i64)> {
+    pub async fn get_sum_bridge_in(&mut self, bridge_path: u8) -> anyhow::Result<(i64, i64)> {
         let record = sqlx::query!(
             "SELECT SUM(amount) as total, COUNT(*) as tx_count FROM instance WHERE bridge_path = ? ",
             bridge_path
         )
             .fetch_one(self.conn())
             .await?;
+        Ok((record.total.unwrap_or(0), record.tx_count))
+    }
+
+    pub async fn get_sum_bridge_out(&mut self) -> anyhow::Result<(i64, i64)> {
+        let record = sqlx::query!(
+            "SELECT SUM(amount) as total, COUNT(*) as tx_count FROM graph WHERE status NOT IN \
+            ('OperatorPresigned','CommitteePresigned','OperatorDataPushed')"
+        )
+        .fetch_one(self.conn())
+        .await?;
         Ok((record.total.unwrap_or(0), record.tx_count))
     }
 

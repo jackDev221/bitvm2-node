@@ -10,10 +10,6 @@ use std::str::FromStr;
 use store::{GrapRpcQueryData, Graph, Instance};
 use uuid::Uuid;
 
-pub const BTC_MAIN: &str = "bitcoin";
-pub const BTC_TEST_BLOCK_INTERVAL: u32 = 10;
-pub const BTC_MAIN_BLOCK_INTERVAL: u32 = 10;
-// the input to our `create_user` handler
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct UTXO {
@@ -47,6 +43,11 @@ pub struct GraphPresignCheckParams {
     pub instance_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct GraphTxGetParams {
+    pub tx_name: String,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct GraphPresignCheckResponse {
     pub instance_id: String,
@@ -68,7 +69,8 @@ pub struct InstanceListRequest {
 pub struct InstanceWrap {
     pub instance: Option<Instance>,
     pub utxo: Option<Vec<UTXO>>,
-    pub eta: Option<String>,
+    pub confirmations: u32,
+    pub target_confirmations: u32,
 }
 
 #[derive(Deserialize, Serialize, Default)]
@@ -109,6 +111,31 @@ pub struct InstanceOverview {
 pub struct GraphGetResponse {
     pub graph: Option<Graph>,
 }
+#[derive(Deserialize, Serialize)]
+pub struct GraphTxnGetResponse {
+    #[serde(rename = "assert-commit0")]
+    pub assert_commit0: String,
+    #[serde(rename = "assert-commit1")]
+    pub assert_commit1: String,
+    #[serde(rename = "assert-commit2")]
+    pub assert_commit2: String,
+    #[serde(rename = "assert-commit3")]
+    pub assert_commit3: String,
+    #[serde(rename = "assert-init")]
+    pub assert_init: String,
+    #[serde(rename = "assert-final")]
+    pub assert_final: String,
+    pub challenge: String,
+    pub disprove: String,
+    pub kickoff: String,
+    pub pegin: String,
+    pub take1: String,
+    pub take2: String,
+}
+#[derive(Deserialize, Serialize)]
+pub struct GraphTxGetResponse {
+    pub tx_hex: String,
+}
 
 #[derive(Deserialize)]
 pub struct GraphUpdateRequest {
@@ -141,7 +168,8 @@ pub struct GraphListResponse {
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct GrapRpcQueryDataWrap {
     pub graph: GrapRpcQueryData,
-    pub eta: String,
+    pub confirmations: u32,
+    pub target_confirmations: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

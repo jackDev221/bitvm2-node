@@ -174,7 +174,8 @@ pub enum InstanceStatus {
       "created_at": "number",
       "updated_at": "number"
     },
-    "eta": "string",
+    "confirmations": "number",
+    "target_confirmations": "number",
     "utxo": [
       {
         "txid": "string",
@@ -218,7 +219,8 @@ pub enum InstanceStatus {
           "created_at": "number",
           "updated_at": "number"
         },
-        "eta": "string",
+        "confirmations": "number",
+        "target_confirmations": "number",
         "utxo": [
           {
             "txid": "string",
@@ -404,7 +406,8 @@ pub enum GraphBridgePath {
                 "updated_at": "number",
                 "created_at": "number"
             },
-            "eta": "string"
+             "confirmations": "number",
+             "target_confirmations": "number"
         }
     ],
     "total": "number"
@@ -435,7 +438,7 @@ pub enum GraphBridgePath {
 
 #### Graph Presign Check
 
-- **Endpoint**: `POST /v1/graphs/presign_check`
+- **Endpoint**: `GET /v1/graphs/presign_check`
 - **Description**: Check the presign status of a graph
 - **Request Body**:
   ```json
@@ -471,6 +474,43 @@ pub enum GraphBridgePath {
 ```
 `ps:graph_status is map<graph_id>graph_status` ,The number of `graph_status` should correspond to the number of graphs for the given instance.
 If a graph for the instancce is created, the count must be greater than or equal to 1. 
+
+#### Graph TXN
+
+- **Endpoint**: `GET /v1/graphs/{id}/txn`
+- **Description**: get graph txn: kickoff take1 and so on. 
+- **Path Parameters**:
+  - `id`: Graph ID
+- **Response**:
+```json
+{
+  "assert-commit0": "string",
+  "assert-commit1": "string",
+  "assert-commit2": "string",
+  "assert-commit3": "string",
+  "assert-init": "string",
+  "assert-final": "string",
+  "challenge": "string",
+  "disprove": "string",
+  "kickoff": "string",
+  "pegin": "string",
+  "take1": "string",
+  "take2": "string"
+}
+```
+- **Endpoint**: `GET /v1/graphs/{id}/tx`
+- **Description**: get graph txn: kickoff take1 and so on.
+- **Path Parameters**:
+  - `id`: Graph ID
+- **Query Parameters**:
+  - `tx_name`: exp  assert-commit0.hex.. 
+  - `operator`: operator
+- **Response**:
+```json
+{
+  "tx_hex": "string"
+}
+```
 
   ## Error Handling
 

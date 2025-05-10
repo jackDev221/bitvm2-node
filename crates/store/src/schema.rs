@@ -70,6 +70,22 @@ pub enum BridgeInStatus {
     L2MintedFailed,
 }
 
+impl FromStr for BridgeInStatus {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Submitted" => Ok(BridgeInStatus::Submitted),
+            "SubmittedFailed" => Ok(BridgeInStatus::SubmittedFailed),
+            "Presigned" => Ok(BridgeInStatus::Presigned),
+            "PresignedFailed" => Ok(BridgeInStatus::PresignedFailed),
+            "L1Broadcasted" => Ok(BridgeInStatus::L1Broadcasted),
+            "L2Minted" => Ok(BridgeInStatus::L2Minted),
+            "L2MintedFailed" => Ok(BridgeInStatus::L2MintedFailed),
+            _ => Err(()),
+        }
+    }
+}
+
 impl std::fmt::Display for BridgeInStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{self:?}")
@@ -77,7 +93,7 @@ impl std::fmt::Display for BridgeInStatus {
 }
 
 /// graph status
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, Eq, PartialEq)]
 pub enum GraphStatus {
     #[default]
     OperatorPresigned,
@@ -265,9 +281,6 @@ pub struct GrapRpcQueryData {
 
 impl GrapRpcQueryData {
     pub fn get_check_tx_param(&self) -> Result<(Option<String>, u32), String> {
-        if self.bridge_path == 0 {
-            return Ok((Some(self.pegin_txid.clone()), 6));
-        }
         let status = GraphStatus::from_str(&self.status);
         if status.is_err() {
             return Err("Graph status is wrong".to_string());

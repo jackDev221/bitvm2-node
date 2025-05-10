@@ -1,4 +1,4 @@
-use crate::env::MODIFY_GRAPH_STATUS_TIME_THRESHOLD;
+use crate::env::{IpfsTxName, MODIFY_GRAPH_STATUS_TIME_THRESHOLD};
 use crate::rpc_service::bitvm2::*;
 use crate::rpc_service::node::ALIVE_TIME_JUDGE_THRESHOLD;
 use crate::rpc_service::{AppState, current_time_secs};
@@ -6,8 +6,11 @@ use crate::utils::node_p2wsh_address;
 use alloy::primitives::Address;
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{Network, PublicKey, Txid};
+use bitvm2_lib::types::Bitvm2Graph;
 use esplora_client::AsyncClient;
+use goat::transactions::pre_signed::PreSignedTransaction;
 use http::StatusCode;
 use std::collections::HashMap;
 use std::default::Default;
@@ -144,6 +147,107 @@ pub async fn graph_presign_check(
 }
 
 #[axum::debug_handler]
+pub async fn get_graph_tx(
+    Query(params): Query<GraphTxGetParams>,
+    Path(graph_id): Path<String>,
+    State(app_state): State<Arc<AppState>>,
+) -> (StatusCode, Json<Option<GraphTxGetResponse>>) {
+    let async_fn = || async move {
+        let mut storage_process = app_state.bitvm2_client.local_db.acquire().await?;
+        let graph_op = storage_process.get_graph(&Uuid::parse_str(&graph_id)?).await?;
+        if graph_op.is_none() {
+            tracing::warn!("graph:{} is not record in db", graph_id);
+            return Err(format!("graph:{graph_id} is not record in db").into());
+        };
+        let graph = graph_op.unwrap();
+        if graph.raw_data.is_none() {
+            return Err(format!("grap with graph_id:{graph_id} raw data is none").into());
+        }
+        let bitvm2_graph: Bitvm2Graph = serde_json::from_str(graph.raw_data.unwrap().as_str())?;
+        let tx_name_op = IpfsTxName::from_str(&params.tx_name);
+        if tx_name_op.is_err() {
+            return Err(format!(
+                "grap with graph_id:{graph_id} decode tx_name:{} failed",
+                params.tx_name
+            )
+            .into());
+        }
+        let tx_hex = match tx_name_op.unwrap() {
+            IpfsTxName::AssertCommit0 => {
+                serialize_hex(bitvm2_graph.assert_commit.commit_txns[0].tx())
+            }
+            IpfsTxName::AssertCommit1 => {
+                serialize_hex(bitvm2_graph.assert_commit.commit_txns[1].tx())
+            }
+            IpfsTxName::AssertCommit2 => {
+                serialize_hex(bitvm2_graph.assert_commit.commit_txns[2].tx())
+            }
+            IpfsTxName::AssertCommit3 => {
+                serialize_hex(bitvm2_graph.assert_commit.commit_txns[3].tx())
+            }
+            IpfsTxName::AssertInit => serialize_hex(bitvm2_graph.assert_init.tx()),
+            IpfsTxName::AssertFinal => serialize_hex(bitvm2_graph.assert_final.tx()),
+            IpfsTxName::Challenge => serialize_hex(bitvm2_graph.challenge.tx()),
+            IpfsTxName::Disprove => serialize_hex(bitvm2_graph.disprove.tx()),
+            IpfsTxName::Kickoff => serialize_hex(bitvm2_graph.kickoff.tx()),
+            IpfsTxName::Pegin => serialize_hex(bitvm2_graph.pegin.tx()),
+            IpfsTxName::Take1 => serialize_hex(bitvm2_graph.take1.tx()),
+            IpfsTxName::Take2 => serialize_hex(bitvm2_graph.take2.tx()),
+        };
+        Ok::<GraphTxGetResponse, Box<dyn std::error::Error>>(GraphTxGetResponse { tx_hex })
+    };
+    match async_fn().await {
+        Ok(resp) => (StatusCode::OK, Json(Some(resp))),
+        Err(err) => {
+            tracing::warn!("get_graph_tx  err:{:?}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(None))
+        }
+    }
+}
+
+#[axum::debug_handler]
+pub async fn get_graph_txn(
+    Path(graph_id): Path<String>,
+    State(app_state): State<Arc<AppState>>,
+) -> (StatusCode, Json<Option<GraphTxnGetResponse>>) {
+    let async_fn = || async move {
+        let mut storage_process = app_state.bitvm2_client.local_db.acquire().await?;
+        let graph_op = storage_process.get_graph(&Uuid::parse_str(&graph_id)?).await?;
+        if graph_op.is_none() {
+            tracing::warn!("graph:{} is not record in db", graph_id);
+            return Err(format!("graph:{graph_id} is not record in db").into());
+        };
+        let graph = graph_op.unwrap();
+        if graph.raw_data.is_none() {
+            return Err(format!("grap with graph_id:{graph_id} raw data is none").into());
+        }
+        let bitvm2_graph: Bitvm2Graph = serde_json::from_str(graph.raw_data.unwrap().as_str())?;
+        let resp = GraphTxnGetResponse {
+            assert_commit0: serialize_hex(bitvm2_graph.assert_commit.commit_txns[0].tx()),
+            assert_commit1: serialize_hex(bitvm2_graph.assert_commit.commit_txns[1].tx()),
+            assert_commit2: serialize_hex(bitvm2_graph.assert_commit.commit_txns[2].tx()),
+            assert_commit3: serialize_hex(bitvm2_graph.assert_commit.commit_txns[3].tx()),
+            assert_init: serialize_hex(bitvm2_graph.assert_init.tx()),
+            assert_final: serialize_hex(bitvm2_graph.assert_final.tx()),
+            challenge: serialize_hex(bitvm2_graph.challenge.tx()),
+            disprove: serialize_hex(bitvm2_graph.disprove.tx()),
+            kickoff: serialize_hex(bitvm2_graph.kickoff.tx()),
+            pegin: serialize_hex(bitvm2_graph.pegin.tx()),
+            take1: serialize_hex(bitvm2_graph.take1.tx()),
+            take2: serialize_hex(bitvm2_graph.take2.tx()),
+        };
+        Ok::<GraphTxnGetResponse, Box<dyn std::error::Error>>(resp)
+    };
+    match async_fn().await {
+        Ok(resp) => (StatusCode::OK, Json(Some(resp))),
+        Err(err) => {
+            tracing::warn!("get_graph_txn  err:{:?}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(None))
+        }
+    }
+}
+
+#[axum::debug_handler]
 pub async fn create_instance(
     State(app_state): State<Arc<AppState>>,
     Json(payload): Json<InstanceUpdateRequest>,
@@ -191,36 +295,23 @@ pub async fn get_btc_height(btc_client: &AsyncClient) -> anyhow::Result<u32> {
     Ok(btc_client.get_height().await?)
 }
 
-pub fn get_btc_block_interval(network: &str) -> u32 {
-    let mut interval = BTC_TEST_BLOCK_INTERVAL;
-    if network == BTC_MAIN {
-        interval = BTC_MAIN_BLOCK_INTERVAL;
-    }
-    interval
-}
-
-async fn get_tx_eta(
+async fn get_tx_confirmation_info(
     btc_client: &AsyncClient,
-    tx_id: Option<String>,
+    btc_tx_id: Option<String>,
     current_height: u32,
-    confirm_num: u32,
-    interval: u32,
-) -> anyhow::Result<String> {
-    if tx_id.is_none() {
-        return Ok("-".to_string());
+    target_confirm_num: u32,
+) -> anyhow::Result<(u32, u32)> {
+    if btc_tx_id.is_none() {
+        return Ok((0, target_confirm_num));
     }
-    let tx_id = tx_id.unwrap();
+    let tx_id = btc_tx_id.unwrap();
     let status = btc_client.get_tx_status(&Txid::from_str(&tx_id)?).await?;
     let blocks_pass = if let Some(block_height) = status.block_height {
         current_height - block_height
     } else {
-        confirm_num
+        0
     };
-    if blocks_pass >= confirm_num {
-        Ok("Est.completed".to_string())
-    } else {
-        Ok(format!("Est. wait for {} mins", (confirm_num - blocks_pass) * interval))
-    }
+    Ok((blocks_pass, target_confirm_num))
 }
 
 #[axum::debug_handler]
@@ -256,22 +347,25 @@ pub async fn get_instances(
         }
 
         let current_height = get_btc_height(&app_state.bitvm2_client.esplora).await?;
-        let interval = get_btc_block_interval(instances[0].network.clone().as_str());
 
         let mut items = vec![];
         for mut instance in instances {
-            let eta = get_tx_eta(
+            let (confirmations, target_confirmations) = get_tx_confirmation_info(
                 &app_state.bitvm2_client.esplora,
                 instance.pegin_txid.clone(),
                 current_height,
                 6,
-                interval,
             )
             .await?;
             instance.reverse_btc_txid();
             let utxo: Vec<UTXO> = serde_json::from_str(&instance.input_uxtos).unwrap();
 
-            items.push(InstanceWrap { utxo: Some(utxo), instance: Some(instance), eta: Some(eta) })
+            items.push(InstanceWrap {
+                utxo: Some(utxo),
+                instance: Some(instance),
+                confirmations,
+                target_confirmations,
+            })
         }
 
         Ok::<InstanceListResponse, Box<dyn std::error::Error>>(InstanceListResponse {
@@ -300,21 +394,18 @@ pub async fn get_instance(
         if instance_op.is_none() {
             tracing::info!("instance_id {} has no record in database", instance_id);
             return Ok::<InstanceGetResponse, Box<dyn std::error::Error>>(InstanceGetResponse {
-                instance_wrap: InstanceWrap { utxo: None, instance: None, eta: None },
+                instance_wrap: InstanceWrap::default(),
             });
         }
         let mut instance = instance_op.unwrap();
         instance.reverse_btc_txid();
-        let network = instance.network.clone();
         let current_height = get_btc_height(&app_state.bitvm2_client.esplora).await?;
-        let interval = get_btc_block_interval(network.as_str());
         let utxo: Vec<UTXO> = serde_json::from_str(&instance.input_uxtos).unwrap();
-        let eta = get_tx_eta(
+        let (confirmations, target_confirmations) = get_tx_confirmation_info(
             &app_state.bitvm2_client.esplora,
             instance.pegin_txid.clone(),
             current_height,
             6,
-            interval,
         )
         .await?;
 
@@ -322,7 +413,8 @@ pub async fn get_instance(
             instance_wrap: InstanceWrap {
                 utxo: Some(utxo),
                 instance: Some(instance),
-                eta: Some(eta),
+                confirmations,
+                target_confirmations,
             },
         })
     };
@@ -341,9 +433,8 @@ pub async fn get_instances_overview(
     let async_fn = || async move {
         let mut storage_process = app_state.bitvm2_client.local_db.acquire().await?;
         let (pegin_sum, pegin_count) =
-            storage_process.get_sum_bridge_in_or_out(BridgePath::BTCToPgBTC.to_u8()).await?;
-        let (pegout_sum, pegout_count) =
-            storage_process.get_sum_bridge_in_or_out(BridgePath::PgBTCToBTC.to_u8()).await?;
+            storage_process.get_sum_bridge_in(BridgePath::BTCToPgBTC.to_u8()).await?;
+        let (pegout_sum, pegout_count) = storage_process.get_sum_bridge_out().await?;
         let (total, alive) = storage_process.get_nodes_info(ALIVE_TIME_JUDGE_THRESHOLD).await?;
         Ok::<InstanceOverviewResponse, Box<dyn std::error::Error>>(InstanceOverviewResponse {
             instances_overview: InstanceOverview {
@@ -440,13 +531,19 @@ pub async fn get_graphs(
         if is_goat_address {
             from_addr = goat_address;
         }
+        let pegin_txid = if let Some(tx_id) = params.pegin_txid {
+            let pegin_txid = Txid::from_str(&tx_id)?;
+            Some(serialize_hex(&pegin_txid))
+        } else {
+            None
+        };
         let (graphs, total) = storage_process
             .filter_graphs(FilterGraphParams {
                 is_bridge_out: is_goat_address,
                 status: params.status,
                 operator: params.operator,
                 from_addr: from_addr.clone(),
-                pegin_txid: params.pegin_txid,
+                pegin_txid,
                 offset: params.offset,
                 limit: params.limit,
             })
@@ -459,30 +556,32 @@ pub async fn get_graphs(
         let current_time = current_time_secs();
 
         let current_height = get_btc_height(&app_state.bitvm2_client.esplora).await?;
-        let interval = get_btc_block_interval(graphs[0].network.clone().as_str());
         for mut graph in graphs {
             convert_addrs_for_bridge_out(&mut graph, is_goat_address, from_addr.clone())?;
+            graph.reverse_btc_txid();
+            let (confirmations, target_confirmations) = match graph.get_check_tx_param() {
+                Ok((tx_id, confirm_num)) => {
+                    get_tx_confirmation_info(
+                        &app_state.bitvm2_client.esplora,
+                        tx_id,
+                        current_height,
+                        confirm_num,
+                    )
+                    .await?
+                }
+                Err(_) => (0, 0),
+            };
             graph.status = modify_graph_status(
                 &graph.status,
                 graph.updated_at,
                 current_time,
                 MODIFY_GRAPH_STATUS_TIME_THRESHOLD,
             );
-            graph.reverse_btc_txid();
-            let eta = match graph.get_check_tx_param() {
-                Ok((tx_id, confirm_num)) => {
-                    get_tx_eta(
-                        &app_state.bitvm2_client.esplora,
-                        tx_id,
-                        current_height,
-                        confirm_num,
-                        interval,
-                    )
-                    .await?
-                }
-                Err(err) => err,
-            };
-            resp_clone.graphs.push(GrapRpcQueryDataWrap { graph, eta });
+            resp_clone.graphs.push(GrapRpcQueryDataWrap {
+                graph,
+                confirmations,
+                target_confirmations,
+            });
         }
         Ok::<GraphListResponse, Box<dyn std::error::Error>>(resp_clone)
     };

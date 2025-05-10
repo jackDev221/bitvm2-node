@@ -532,7 +532,9 @@ pub async fn should_challenge(
 
     // check if withdraw is initialized on L2
     let withdraw_status = client.chain_service.adaptor.get_withdraw_data(&graph_id).await?.status;
-    if withdraw_status == WithdrawStatus::Initialized {
+    if withdraw_status == WithdrawStatus::Initialized
+        || withdraw_status == WithdrawStatus::Processing
+    {
         return Ok(false);
     };
 
@@ -897,11 +899,19 @@ pub async fn store_graph(
 
     if let Some(status) = status {
         if status == GraphStatus::CommitteePresigned.to_string() {
+            let pegin_tx = graph.pegin.tx();
+            let sum_input_value =
+                graph.pegin.input_amounts.iter().fold(Amount::ZERO, |acc, v| acc + *v);
+            let sum_output_value =
+                pegin_tx.output.iter().fold(Amount::ZERO, |acc, v| acc + v.value);
             transaction
                 .update_instance_fields(
                     &instance_id,
                     Some(BridgeInStatus::Presigned.to_string()),
-                    Some(serialize_hex(&graph.pegin.tx().compute_txid())),
+                    Some((
+                        serialize_hex(&graph.pegin.tx().compute_txid()),
+                        (sum_input_value - sum_output_value).to_sat() as i64,
+                    )),
                     None,
                 )
                 .await?
@@ -1004,6 +1014,65 @@ pub async fn get_my_graph_for_instance(
         .get_instanceids_by_pubkey(&operator_pubkey.to_bytes()[1..33].try_into()?)
         .await?;
     Ok(ids_vec.iter().find(|(a, _)| *a == instance_id).map(|(_, b)| *b))
+}
+
+pub async fn get_graph_status(
+    client: &BitVM2Client,
+    instance_id: Uuid,
+    graph_id: Uuid,
+) -> Result<GraphStatus, Box<dyn std::error::Error>> {
+    let mut storage_process = client.local_db.acquire().await?;
+    let graph_op = storage_process.get_graph(&graph_id).await?;
+    if graph_op.is_none() {
+        tracing::warn!("graph:{} is not record in db", graph_id);
+        return Err(format!("graph:{graph_id} is not record in db").into());
+    };
+    let graph = graph_op.unwrap();
+    if graph.instance_id.ne(&instance_id) {
+        return Err(format!(
+            "grap with graph_id:{graph_id} has instance_id:{} not match exp instance:{instance_id}",
+            graph.instance_id,
+        )
+        .into());
+    }
+    Ok(GraphStatus::from_str(&graph.status)
+        .map_err(|_| format!("unknown graph status: {}", graph.status))?)
+}
+
+/// Returns:
+/// - `Ok(true)` tx confirmed,
+/// - `Ok(false)` tx not confirmed, exceeds the maximum waiting time
+pub async fn wait_tx_confirmation(
+    client: &BitVM2Client,
+    txid: &Txid,
+    interval: u64,
+    max_wait_secs: u64,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+    let start_time = Instant::now();
+    loop {
+        if start_time.elapsed().as_secs() > max_wait_secs {
+            // println!("Timeout: Transaction not confirmed after {} seconds", max_wait_secs);
+            return Ok(false);
+        };
+        match client.esplora.get_tx_status(txid).await {
+            Ok(status) => {
+                if let Some(_height) = status.block_height {
+                    // println!("Transaction confirmed in block {}", height);
+                    return Ok(true);
+                } else {
+                    // println!("Transaction unconfirmed, polling again...");
+                }
+            }
+            Err(e) => {
+                return Err(format!("Failed to fetch transaction status: {e}").into());
+            }
+        }
+        thread::sleep(Duration::from_secs(interval));
+    }
 }
 
 pub mod defer {
