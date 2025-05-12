@@ -4,14 +4,19 @@ use alloy::primitives::Address as EvmAddress;
 use alloy::primitives::Address;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;
+use base64::Engine;
 use bitcoin::{Network, PublicKey, key::Keypair};
 use bitvm2_lib::actors::Actor;
 use bitvm2_lib::keys::NodeMasterKey;
+use client::chain::utils::{validate_committee, validate_operator};
 use client::chain::{chain_adaptor::GoatNetwork, goat_adaptor::GoatInitConfig};
+use libp2p::PeerId;
 use musig2::k256::sha2;
 use reqwest::Url;
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
+use tracing::info;
+use zeroize::Zeroizing;
 
 pub const ENV_GOAT_CHAIN_URL: &str = "GOAT_CHAIN_URL";
 pub const ENV_GOAT_GATEWAY_CONTRACT_ADDRESS: &str = "GOAT_GATEWAY_CONTRACT_ADDRESS";
@@ -102,14 +107,68 @@ pub fn get_peer_key() -> String {
     std::env::var(ENV_PEER_KEY).expect("Peer key is missing")
 }
 
+pub fn get_peer_id() -> String {
+    let local_key = get_peer_key();
+    let key_pair = libp2p::identity::Keypair::from_protobuf_encoding(&Zeroizing::new(
+        base64::engine::general_purpose::STANDARD.decode(local_key).expect("fail to decode base64"),
+    ))
+    .expect("failed to gen keypair");
+    key_pair.public().to_peer_id().to_string()
+}
+
 pub fn get_ipfs_url() -> String {
     let default_url: &str = "http://44.229.236.82:5001";
     std::env::var(ENV_IPFS_ENDPOINT).unwrap_or(default_url.to_string())
 }
 
+pub async fn check_node_info() {
+    let node_info = get_local_node_info();
+    if node_info.actor == Actor::Operator.to_string() && node_info.goat_addr.is_empty() {
+        panic!("Operator must set goat address or goat secret key");
+    }
+    if Actor::Committee.to_string() == node_info.actor
+        || Actor::Operator.to_string() == node_info.actor
+    {
+        let rpc_url = get_goat_url_from_env();
+        let gateway_address = get_goat_gateway_contract_from_env();
+        let provider = ProviderBuilder::new().on_http(rpc_url);
+        let peer_id = PeerId::from_str(&node_info.peer_id).expect("fail to decode");
+
+        if node_info.actor == Actor::Committee.to_string() {
+            match validate_committee(&provider, gateway_address, &peer_id.to_bytes()).await {
+                Ok(is_legal) => {
+                    if is_legal {
+                        info!("Committee is legal!");
+                    } else {
+                        panic!("Committee is illegal as not finish register! ")
+                    }
+                }
+                Err(err) => {
+                    panic!("Committee validate failed, err:{err:?}")
+                }
+            }
+            panic!("Fail to check committee ")
+        }
+        if node_info.actor == Actor::Operator.to_string() {
+            match validate_operator(&provider, gateway_address, &peer_id.to_bytes()).await {
+                Ok(is_legal) => {
+                    if is_legal {
+                        info!("Operator is legal!");
+                    } else {
+                        panic!("Operator is illegal as not finish register! ")
+                    }
+                }
+                Err(err) => {
+                    panic!("Operator validate failed, err:{err:?}")
+                }
+            }
+            panic!("Fail to check Operator ")
+        }
+    }
+}
 pub fn get_local_node_info() -> NodeInfo {
     let actor = get_actor();
-    let peer_id = get_peer_key();
+    let peer_key = get_peer_id();
     let pubkey = get_node_pubkey().expect("Could not get public key");
     let goat_address = if let Ok(private_key_hex) = std::env::var(ENV_GOAT_PRIVATE_KEY) {
         let singer =
@@ -124,20 +183,8 @@ pub fn get_local_node_info() -> NodeInfo {
         }
         addr_op
     };
-    if actor == Actor::Operator && goat_address.is_none() {
-        panic!("Operator must set goat address or goat secret key");
-    }
-
-    if actor == Actor::Committee {
-        // TODO: do check
-        //let committee_peer_ids= get_committee_peer_id_checked(get_network());
-        //if !committee_peer_ids.contains(&peer_id) {
-        //    panic!("Invalidate committee pubkey");
-        //}
-    }
-
     NodeInfo {
-        peer_id,
+        peer_id: peer_key,
         actor: actor.to_string(),
         goat_addr: goat_address.unwrap_or("".to_string()),
         btc_pub_key: pubkey.to_string(),
@@ -201,27 +248,31 @@ impl FromStr for IpfsTxName {
     }
 }
 
+pub fn get_goat_url_from_env() -> Url {
+    let rpc_url_str =
+        std::env::var(ENV_GOAT_CHAIN_URL).expect("Failed to read {ENV_GOAT_CHAIN_URL} variable");
+    rpc_url_str.parse::<Url>().expect("Failed to parse {rpc_url_str} to URL")
+}
+
+pub fn get_goat_gateway_contract_from_env() -> EvmAddress {
+    let gateway_address_str = std::env::var(ENV_GOAT_GATEWAY_CONTRACT_ADDRESS)
+        .expect("Failed to read {ENV_GOAT_GATEWAY_CONTRACT_ADDRESS} variable");
+    gateway_address_str
+        .parse::<EvmAddress>()
+        .expect("Failed to parse {gateway_address_str} to address")
+}
+
 pub async fn goat_config_from_env() -> GoatInitConfig {
     if cfg!(feature = "tests") {
         return GoatInitConfig::from_env_for_test();
     }
-
-    let rpc_url_str =
-        std::env::var(ENV_GOAT_CHAIN_URL).expect("Failed to read {ENV_GOAT_CHAIN_URL} variable");
-    let rpc_url = rpc_url_str.parse::<Url>().expect("Failed to parse {rpc_url_str} to URL");
-
-    let gateway_address_str = std::env::var(ENV_GOAT_GATEWAY_CONTRACT_ADDRESS)
-        .expect("Failed to read {ENV_GOAT_GATEWAY_CONTRACT_ADDRESS} variable");
-    let gateway_address = gateway_address_str
-        .parse::<EvmAddress>()
-        .expect("Failed to parse {gateway_address_str} to address");
-
+    let rpc_url = get_goat_url_from_env();
+    let gateway_address = get_goat_gateway_contract_from_env();
     let private_key = std::env::var(ENV_GOAT_PRIVATE_KEY).ok();
     let chain_id = {
         let provider = ProviderBuilder::new().on_http(rpc_url.clone());
         // Call `eth_chainId`
         provider.get_chain_id().await.expect("cannot get chain_id from {rpc_url}") as u32
     };
-
     GoatInitConfig { rpc_url, gateway_address, private_key, chain_id }
 }
