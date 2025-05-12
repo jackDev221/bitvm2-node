@@ -184,6 +184,7 @@ pub struct SyncGraph {
     pub instance_id: Uuid,
     pub graph_id: Uuid,
     pub graph: SimplifiedBitvm2Graph,
+    pub graph_status: GraphStatus,
 }
 
 impl GOATMessage {
@@ -255,6 +256,7 @@ pub async fn recv_and_dispatch(
         // CreateInstance sent by bootnode
         (GOATMessageContent::CreateInstance(receive_data), Actor::Committee) => {
             tracing::info!("Handle CreateInstance");
+            // TODO: check: user inputs must be segwit addresses
             let instance_id = receive_data.instance_id;
             let master_key = CommitteeMasterKey::new(env::get_bitvm_key()?);
             let keypair = master_key.keypair_for_instance(instance_id);
@@ -273,6 +275,7 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::CreateGraphPrepare(receive_data), Actor::Operator) => {
             tracing::info!("Handle CreateGraphPrepare");
+            // TODO: check: the message must come from committee
             store_committee_pubkeys(
                 client,
                 receive_data.instance_id,
@@ -348,6 +351,7 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::CreateGraph(receive_data), Actor::Committee) => {
             tracing::info!("Handle CreateGraph");
+            // TODO: check: the message must come from whitelisted operator
             let graph = Bitvm2Graph::from_simplified(receive_data.graph)?;
             store_graph(
                 client,
@@ -414,6 +418,7 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::NonceGeneration(receive_data), Actor::Committee) => {
             tracing::info!("Handle NonceGeneration");
+            // TODO: check that the message must come from committee
             store_committee_pub_nonces(
                 client,
                 receive_data.instance_id,
@@ -456,6 +461,7 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::CommitteePresign(receive_data), Actor::Operator) => {
             tracing::info!("Handle CommitteePresign");
+            // TODO: check that the message must come from committee
             if Some((receive_data.instance_id, receive_data.graph_id))
                 == statics::current_processing_graph()
             {
@@ -540,6 +546,7 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::GraphFinalize(receive_data), _) => {
             tracing::info!("Handle GraphFinalize");
+            // TODO: check: the message must come from whitelisted operator
             // TODO: validate graph & ipfs
             let graph = Bitvm2Graph::from_simplified(receive_data.graph)?;
             store_graph(
@@ -619,9 +626,7 @@ pub async fn recv_and_dispatch(
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
                     .ok_or(format!("graph {} not found", receive_data.graph_id))?;
-            if graph_status != GraphStatus::CommitteePresigned
-                && graph_status != GraphStatus::KickOff
-            {
+            if ![GraphStatus::CommitteePresigned, GraphStatus::KickOff].contains(&graph_status) {
                 tracing::warn!(
                     "receive KickoffSent but currently in {graph_status} Status, ignored"
                 );
@@ -683,9 +688,7 @@ pub async fn recv_and_dispatch(
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
                     .ok_or(format!("graph {} not found", receive_data.graph_id))?;
-            if graph_status != GraphStatus::CommitteePresigned
-                && graph_status != GraphStatus::KickOff
-            {
+            if ![GraphStatus::CommitteePresigned, GraphStatus::KickOff].contains(&graph_status) {
                 tracing::warn!(
                     "receive Take1Ready but currently in {graph_status} Status, ignored"
                 );
@@ -729,6 +732,18 @@ pub async fn recv_and_dispatch(
         // if challenger
         (GOATMessageContent::ChallengeSent(receive_data), Actor::Operator) => {
             tracing::info!("Handle ChallengeSent");
+            let graph_status =
+                get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
+                    .await?
+                    .ok_or(format!("graph {} not found", receive_data.graph_id))?;
+            if ![GraphStatus::CommitteePresigned, GraphStatus::KickOff, GraphStatus::Challenge]
+                .contains(&graph_status)
+            {
+                tracing::warn!(
+                    "receive ChallengeSent but currently in {graph_status} Status, ignored"
+                );
+                return Ok(());
+            }
             let mut graph =
                 get_graph(client, receive_data.instance_id, receive_data.graph_id).await?;
             if graph.parameters.operator_pubkey == env::get_node_pubkey()?
@@ -829,7 +844,7 @@ pub async fn recv_and_dispatch(
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
                     .ok_or(format!("graph {} not found", receive_data.graph_id))?;
-            if graph_status == GraphStatus::Take2 || graph_status == GraphStatus::Disprove {
+            if [GraphStatus::Take2, GraphStatus::Disprove].contains(&graph_status) {
                 tracing::warn!(
                     "receive AssertSent but currently in {graph_status} Status, ignored"
                 );
@@ -935,6 +950,15 @@ pub async fn recv_and_dispatch(
             )
             .await?
             {
+                update_graph_fields(
+                    client,
+                    receive_data.graph_id,
+                    None,
+                    None,
+                    None,
+                    Some(receive_data.disprove_txid.to_string()),
+                )
+                .await?;
                 finish_withdraw_disproved(
                     client,
                     &receive_data.graph_id,
@@ -947,7 +971,7 @@ pub async fn recv_and_dispatch(
                     Some(GraphStatus::Disprove.to_string()),
                     None,
                     None,
-                    Some(receive_data.disprove_txid.to_string()),
+                    None,
                 )
                 .await?;
 
@@ -1059,9 +1083,7 @@ pub async fn recv_and_dispatch(
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
                     .ok_or(format!("graph {} not found", receive_data.graph_id))?;
-            if graph_status != GraphStatus::CommitteePresigned
-                && graph_status != GraphStatus::KickOff
-            {
+            if ![GraphStatus::CommitteePresigned, GraphStatus::KickOff].contains(&graph_status) {
                 tracing::warn!(
                     "receive ChallengeSent but currently in {graph_status} Status, ignored"
                 );
@@ -1154,21 +1176,27 @@ pub async fn recv_and_dispatch(
         (GOATMessageContent::SyncGraphRequest(receive_data), Actor::Relayer) => {
             tracing::info!("Handle SyncGraphRequest...  ");
             let graph = get_graph(client, receive_data.instance_id, receive_data.graph_id).await?;
+            let graph_status =
+                get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
+                    .await?
+                    .ok_or("empty graph status")?;
             let message_content = GOATMessageContent::SyncGraph(SyncGraph {
                 instance_id: receive_data.instance_id,
                 graph_id: receive_data.graph_id,
                 graph: graph.to_simplified(),
+                graph_status,
             });
             send_to_peer(swarm, GOATMessage::from_typed(Actor::All, &message_content)?)?;
         }
         (GOATMessageContent::SyncGraph(receive_data), _) => {
             tracing::info!("Handle SyncGraph...  ");
+            // TODO: check: the message must come from relayer
             store_graph(
                 client,
                 receive_data.instance_id,
                 receive_data.graph_id,
                 &Bitvm2Graph::from_simplified(receive_data.graph)?,
-                None,
+                Some(receive_data.graph_status.to_string()),
             )
             .await?;
         }
