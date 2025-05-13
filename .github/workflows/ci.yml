@@ -71,11 +71,20 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: nightly
+          toolchain: stable
           override: true
       
       - name: Build Release
         run: cargo build --release
+      
+      - name: Prepare binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "BINARY_NAME=bitvm2-node.exe" >> $GITHUB_ENV
+          else
+            echo "BINARY_NAME=bitvm2-node" >> $GITHUB_ENV
+          fi
       
       - name: Create Release
         id: create_release
@@ -85,6 +94,6 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            target/release/bitvm2-node
+            target/release/${{ env.BINARY_NAME }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
