@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   pull_request:
     branches:
       - main
@@ -52,3 +54,31 @@ jobs:
         run: cd scripts && docker compose up -d
       - name: Run all unit tests
         run: cargo test -r --features tests
+
+  release:
+    name: Release
+    needs: [fmt, clippy, test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      
+      - name: Build Release
+        run: cargo build --release
+      
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            target/release/bitvm2-node
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
