@@ -3,8 +3,8 @@ use base64::Engine;
 use clap::{Parser, Subcommand, command};
 use client::client::BitVM2Client;
 use env::get_node_pubkey;
-use libp2p::PeerId;
 use libp2p::futures::StreamExt;
+use libp2p::{Multiaddr, PeerId};
 use libp2p::{gossipsub, kad, mdns, multiaddr::Protocol, noise, swarm::SwarmEvent, tcp, yamux};
 use libp2p_metrics::Registry;
 use std::collections::HashMap;
@@ -41,6 +41,10 @@ struct Opts {
     /// Run in daemon mode
     #[arg(short)]
     daemon: bool,
+
+    /// Setup the bootnode p2p port
+    #[arg(long, default_value = "0")]
+    p2p_port: u16,
 
     /// Local RPC service address
     #[arg(long, default_value = "0.0.0.0:8080")]
@@ -110,6 +114,18 @@ enum KeyCommands {
     FundingAddress,
 }
 
+fn parse_boot_node_str(boot_node_str: &str) -> Result<(PeerId, Multiaddr), String> {
+    let multi_addr: Multiaddr =
+        boot_node_str.parse().map_err(|e| format!("boot_node_str parse to multi addr err :{e}"))?;
+    println!("multi_addr: {multi_addr}");
+    for protocol in multi_addr.iter() {
+        if let Protocol::P2p(peer_id) = protocol {
+            return Ok((peer_id, multi_addr));
+        }
+    }
+    Err("parse bootnode failed".to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
@@ -126,7 +142,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 println!("PEER_ID={peer_id}");
             }
             KeyCommands::FundingAddress => {
-                let public_key = get_node_pubkey().unwrap();
+                let public_key = get_node_pubkey()?;
                 let p2wsh_addr = utils::node_p2wsh_address(get_network(), &public_key);
                 println!("Funding P2WSH address (for operator and challenger): {p2wsh_addr}");
             }
@@ -156,10 +172,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // to dial these nodes.
     tracing::debug!("bootnodes: {:?}", opt.bootnodes);
     for peer in &opt.bootnodes {
-        swarm
-            .behaviour_mut()
-            .kademlia
-            .add_address(&peer.parse()?, "/dnsaddr/bootstrap.libp2p.io".parse()?);
+        let (peer_id, multi_addr) = parse_boot_node_str(peer)?;
+        swarm.behaviour_mut().kademlia.add_address(&peer_id, multi_addr);
     }
 
     // Create a Gosspipsub topic, we create 3 topics: committee, challenger, and operator
@@ -192,10 +206,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Tell the swarm to listen on all interfaces and a random, OS-assigned
     // port.
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    if opt.p2p_port > 0 {
+        swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{}", opt.p2p_port).parse()?)?;
+    } else {
+        swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    }
 
     // run a http server for front-end
-    let _address = loop {
+    let address = loop {
         if let SwarmEvent::NewListenAddr { address, .. } = swarm.select_next_some().await {
             if address.iter().any(|e| e == Protocol::Ip4(Ipv4Addr::LOCALHOST)) {
                 tracing::debug!(
@@ -207,6 +225,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             break address;
         }
     };
+
+    tracing::info!(
+        "multi_addr: {}/p2p/{}",
+        address.to_string(),
+        local_key.public().to_peer_id().to_string()
+    );
 
     tracing::debug!("RPC service listening on {}", &opt.rpc_addr);
     let rpc_addr = opt.rpc_addr.clone();
