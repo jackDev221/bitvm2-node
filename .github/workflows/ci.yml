@@ -57,13 +57,15 @@ jobs:
 
   release:
     name: Release
-    #    needs: [fmt, clippy, test]
+    needs: [fmt, clippy, test]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os:
           - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
@@ -71,13 +73,24 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
-      
+
       - name: Build Release
         run: cargo build --release
-      
+
       - name: List target directory
         run: ls -la target/release/
-      
+
+      - name: Prepare binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "BINARY_NAME=bitvm2-noded.exe" >> $GITHUB_ENV
+          else
+            echo "BINARY_NAME=bitvm2-noded" >> $GITHUB_ENV
+          fi
+          echo "Binary name: ${{ env.BINARY_NAME }}"
+          ls -la target/release/${{ env.BINARY_NAME }}
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
@@ -86,6 +99,6 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            target/release/bitvm2-noded
+            target/release/${{ env.BINARY_NAME }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
