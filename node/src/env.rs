@@ -278,3 +278,17 @@ pub async fn goat_config_from_env() -> GoatInitConfig {
     };
     GoatInitConfig { rpc_url, gateway_address, private_key, chain_id }
 }
+
+const DEFAULT_PROTO_NAME_BASE: &str = "bitvm2";
+pub fn get_proto_base() -> String {
+    match std::env::var("PROTO_NAME") {
+        Ok(proto_name) => {
+            if proto_name.trim().is_empty() {
+                DEFAULT_PROTO_NAME_BASE.to_string()
+            } else {
+                proto_name
+            }
+        }
+        _ => DEFAULT_PROTO_NAME_BASE.to_owned(),
+    }
+}

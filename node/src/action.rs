@@ -1242,6 +1242,7 @@ pub(crate) fn send_to_peer(
     message: GOATMessage,
 ) -> Result<MessageId, Box<dyn std::error::Error>> {
     let actor = message.actor.to_string();
-    let gossipsub_topic = gossipsub::IdentTopic::new(actor);
+    let topic = crate::middleware::get_topic_name(&actor);
+    let gossipsub_topic = gossipsub::IdentTopic::new(topic);
     Ok(swarm.behaviour_mut().gossipsub.publish(gossipsub_topic, serde_json::to_vec(&message)?)?)
 }
