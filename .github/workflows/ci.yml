@@ -71,8 +71,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           toolchain: nightly
-          components: rustfmt, clippy
-          targets: ${{ matrix.target }}
+#          components: rustfmt, clippy
+#          targets: ${{ matrix.target }}
 
       - name: Build and upload binary
         uses: taiki-e/upload-rust-binary-action@v1
