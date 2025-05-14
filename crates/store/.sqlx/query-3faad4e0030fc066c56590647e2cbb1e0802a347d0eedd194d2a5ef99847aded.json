@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO proof (block_number, proof) VALUES (?,?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "3faad4e0030fc066c56590647e2cbb1e0802a347d0eedd194d2a5ef99847aded"
+}
