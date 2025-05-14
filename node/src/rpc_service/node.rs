@@ -49,3 +49,4 @@ pub struct NodeDesc {
     pub updated_at: i64,
     pub status: String, //dynamic status: online/offline
 }
+

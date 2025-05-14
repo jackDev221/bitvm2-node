@@ -20,7 +20,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use store::localdb::FilterGraphParams;
 use store::{
-    BridgeInStatus, BridgePath, GrapRpcQueryData, Instance, Message, MessageState, MessageType,
+    BridgeInStatus, BridgePath, GrapFullData, Instance, Message, MessageState, MessageType,
     modify_graph_status,
 };
 use uuid::Uuid;
@@ -541,7 +541,6 @@ pub async fn get_graphs(
         let mut storage_process = app_state.bitvm2_client.local_db.acquire().await?;
         let from_addr = params.from_addr.clone();
         let filter_params: FilterGraphParams = params.into();
-        let is_goat_address = !filter_params.is_bridge_in;
         let (graphs, total) = storage_process.filter_graphs(filter_params).await?;
         resp_clone.total = total;
         if graphs.is_empty() {
@@ -549,8 +548,8 @@ pub async fn get_graphs(
         }
         let current_time = current_time_secs();
         let current_height = get_btc_height(&app_state.bitvm2_client.esplora).await?;
+        let mut graph_vec = vec![];
         for mut graph in graphs {
-            convert_addrs_for_bridge_out(&mut graph, is_goat_address, from_addr.clone())?;
             graph.reverse_btc_txid();
             let (confirmations, target_confirmations) = match graph.get_check_tx_param() {
                 Ok((tx_id, confirm_num)) => {
@@ -570,12 +569,18 @@ pub async fn get_graphs(
                 current_time,
                 MODIFY_GRAPH_STATUS_TIME_THRESHOLD,
             );
-            resp_clone.graphs.push(GrapRpcQueryDataWrap {
-                graph,
-                confirmations,
-                target_confirmations,
-            });
+            let graph = convert_to_rpc_query_data(&mut graph, from_addr.clone())?;
+            graph_vec.push(GrapRpcQueryDataWrap { graph, confirmations, target_confirmations });
+            // resp_clone.graphs.push(
+            //     GrapRpcQueryDataWrap {
+            //         graph,
+            //         confirmations,
+            //         target_confirmations,
+            //     }
+            // );
         }
+        graph_vec.sort_by(|a, b| b.graph.created_at.cmp(&a.graph.created_at));
+        resp_clone.graphs = graph_vec;
         Ok::<GraphListResponse, Box<dyn std::error::Error>>(resp_clone)
     };
     match async_fn().await {
@@ -596,24 +601,54 @@ pub fn reflect_goat_address(addr_op: Option<String>) -> (bool, Option<String>) {
     (false, None)
 }
 
-pub fn convert_addrs_for_bridge_out(
-    graph: &mut GrapRpcQueryData,
-    is_bridge_out: bool,
+pub fn convert_to_rpc_query_data(
+    graph: &GrapFullData,
     from_addr: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if !is_bridge_out {
-        return Ok(());
+) -> Result<GrapRpcQueryData, Box<dyn std::error::Error>> {
+    let mut graph_res = GrapRpcQueryData {
+        graph_id: graph.graph_id,
+        instance_id: graph.instance_id,
+        bridge_path: graph.bridge_path,
+        network: graph.network.clone(),
+        from_addr: graph.from_addr.clone(),
+        to_addr: graph.to_addr.clone(),
+        amount: graph.amount,
+        pegin_txid: graph.pegin_txid.clone(),
+        status: graph.status.clone(),
+        kickoff_txid: graph.kickoff_txid.clone(),
+        challenge_txid: graph.challenge_txid.clone(),
+        take1_txid: graph.take1_txid.clone(),
+        assert_init_txid: graph.assert_init_txid.clone(),
+        assert_commit_txids: graph.assert_commit_txids.clone(),
+        assert_final_txid: graph.assert_final_txid.clone(),
+        take2_txid: graph.take2_txid.clone(),
+        disprove_txid: graph.disprove_txid.clone(),
+        operator: graph.operator.clone(),
+        updated_at: graph.updated_at,
+        created_at: graph.created_at,
+    };
+
+    if graph.bridge_out_start_at > 0 {
+        graph_res.created_at = graph.bridge_out_start_at;
+        graph_res.bridge_path = 1_u8;
+        if let Some(from_addr) = from_addr {
+            graph_res.from_addr = from_addr;
+        }
+
+        if !graph.bridge_out_from_addr.is_empty() {
+            graph_res.from_addr = graph.bridge_out_from_addr.clone();
+        }
+        if graph.to_addr.is_empty() {
+            graph_res.to_addr = node_p2wsh_address(
+                Network::from_str(&graph.network)?,
+                &PublicKey::from_str(&graph.operator)?,
+            )
+            .to_string();
+        } else {
+            graph_res.to_addr = graph.bridge_out_to_addr.clone();
+        }
     }
-    graph.bridge_path = 1_u8;
-    if let Some(from_addr) = from_addr {
-        graph.from_addr = from_addr;
-    }
-    graph.to_addr = node_p2wsh_address(
-        Network::from_str(&graph.network)?,
-        &PublicKey::from_str(&graph.operator)?,
-    )
-    .to_string();
-    Ok(())
+    Ok(graph_res)
 }
 
 fn is_segwit_address(address: &str, network: &str) -> anyhow::Result<bool> {

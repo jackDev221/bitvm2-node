@@ -190,6 +190,9 @@ pub struct Graph {
     pub disprove_txid: Option<String>,
     pub operator: String,
     pub raw_data: Option<String>,
+    pub bridge_out_start_at: i64,
+    pub bridge_out_from_addr: String,
+    pub bridge_out_to_addr: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -254,9 +257,9 @@ pub fn modify_graph_status(
     }
 }
 
-// query Data
+// graph full data contain instance.from and instance.to
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
-pub struct GrapRpcQueryData {
+pub struct GrapFullData {
     pub graph_id: Uuid,
     pub instance_id: Uuid,
     pub bridge_path: u8,
@@ -265,7 +268,7 @@ pub struct GrapRpcQueryData {
     pub to_addr: String,
     pub amount: i64,
     pub pegin_txid: String,
-    pub status: String, // GraphStatus | InstanceStatus
+    pub status: String,
     pub kickoff_txid: Option<String>,
     pub challenge_txid: Option<String>,
     pub take1_txid: Option<String>,
@@ -274,12 +277,15 @@ pub struct GrapRpcQueryData {
     pub assert_final_txid: Option<String>,
     pub take2_txid: Option<String>,
     pub disprove_txid: Option<String>,
+    pub bridge_out_start_at: i64,
+    pub bridge_out_from_addr: String,
+    pub bridge_out_to_addr: String,
     pub operator: String,
     pub updated_at: i64,
     pub created_at: i64,
 }
 
-impl GrapRpcQueryData {
+impl GrapFullData {
     pub fn get_check_tx_param(&self) -> Result<(Option<String>, u32), String> {
         let status = GraphStatus::from_str(&self.status);
         if status.is_err() {
@@ -466,6 +472,13 @@ pub struct ProofWithPis {
     pub pis: String,
     pub created_at: i64,
 }
+
+#[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
+pub struct Proof {
+    pub block_number: i64,
+    pub proof: String,
+}
+
 
 fn reversed_btc_txid(tx_id: &str) -> String {
     if let Ok(mut tx_id_vec) = hex::decode(tx_id) {

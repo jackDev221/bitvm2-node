@@ -1,5 +1,4 @@
 use crate::env::{CHEKSIG_P2WSH_INPUT_VBYTES, PEGIN_BASE_VBYTES};
-use crate::rpc_service::handler::bitvm2_handler::reflect_goat_address;
 use alloy::hex::ToHexExt;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::consensus::encode::serialize_hex;
@@ -11,7 +10,7 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::str::FromStr;
 use store::localdb::FilterGraphParams;
-use store::{BridgeInStatus, GrapRpcQueryData, Graph, Instance};
+use store::{Graph, Instance};
 use uuid::Uuid;
 
 #[allow(clippy::upper_case_acronyms)]
@@ -161,8 +160,6 @@ pub struct GraphQueryParams {
 
 impl From<GraphQueryParams> for FilterGraphParams {
     fn from(value: GraphQueryParams) -> Self {
-        let (is_goat_address, goat_address) = reflect_goat_address(value.from_addr.clone());
-        let from_addr = if is_goat_address { goat_address } else { value.from_addr.clone() };
         let mut pegin_txid_op: Option<String> = None;
         let mut graph_ip_op: Option<String> = None;
         if let Some(filed) = value.graph_field {
@@ -173,20 +170,10 @@ impl From<GraphQueryParams> for FilterGraphParams {
                 graph_ip_op = Some(uuid.encode_hex());
             }
         }
-
-        let mut is_bridge_in = false;
-        if let Some(status) = value.status.clone() {
-            is_bridge_in = BridgeInStatus::from_str(&status).is_ok()
-        }
-
-        // todo add btc address check
-        is_bridge_in = is_bridge_in || (!is_goat_address && value.from_addr.is_some());
-
         FilterGraphParams {
-            is_bridge_in,
             status: value.status,
             operator: value.operator,
-            from_addr,
+            from_addr: value.from_addr,
             graph_id: graph_ip_op,
             pegin_txid: pegin_txid_op,
             offset: value.offset,
@@ -203,6 +190,30 @@ impl From<GraphQueryParams> for FilterGraphParams {
 pub struct GraphListResponse {
     pub graphs: Vec<GrapRpcQueryDataWrap>,
     pub total: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct GrapRpcQueryData {
+    pub graph_id: Uuid,
+    pub instance_id: Uuid,
+    pub bridge_path: u8,
+    pub network: String,
+    pub from_addr: String,
+    pub to_addr: String,
+    pub amount: i64,
+    pub pegin_txid: String,
+    pub status: String,
+    pub kickoff_txid: Option<String>,
+    pub challenge_txid: Option<String>,
+    pub take1_txid: Option<String>,
+    pub assert_init_txid: Option<String>,
+    pub assert_commit_txids: Option<String>,
+    pub assert_final_txid: Option<String>,
+    pub take2_txid: Option<String>,
+    pub disprove_txid: Option<String>,
+    pub operator: String,
+    pub updated_at: i64,
+    pub created_at: i64,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
