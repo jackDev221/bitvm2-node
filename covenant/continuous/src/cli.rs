@@ -1,7 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::fs;
+use std::path::PathBuf;
 
 use alloy_chains::Chain;
-use alloy_primitives::Address;
 use alloy_provider::{network::AnyNetwork, Provider, RootProvider};
 use clap::Parser;
 use host_executor::Config;
@@ -9,9 +9,9 @@ use primitives::genesis::Genesis;
 use url::Url;
 use zkm_sdk::ZKMProofKind;
 
-/// The arguments for the host executable.
+/// The arguments for the cli.
 #[derive(Debug, Clone, Parser)]
-pub struct HostArgs {
+pub struct Args {
     /// The block number of the block to execute.
     #[clap(long)]
     pub block_number: u64,
@@ -23,32 +23,28 @@ pub struct HostArgs {
     #[clap(long)]
     pub genesis_path: Option<PathBuf>,
 
-    /// The custom beneficiary address, used with Clique consensus.
-    #[clap(long)]
-    pub custom_beneficiary: Option<Address>,
+    /// The database connection string.
+    #[clap(long, env, default_value = "/tmp/.bitvm2-node.db")]
+    pub database_url: String,
+
+    /// The maximum number of concurrent executions.
+    #[clap(long, env, default_value_t = 1)]
+    pub max_concurrent_executions: usize,
+
+    /// Retry count on failed execution.
+    #[clap(long, env, default_value_t = 1)]
+    pub execution_retries: usize,
 
     /// Whether to generate a proof or just execute the block.
     #[clap(long)]
     pub prove: bool,
 
-    /// Optional path to the directory containing cached client input. A new cache file will be
-    /// created from RPC data if it doesn't already exist.
-    #[clap(long)]
-    pub cache_dir: Option<PathBuf>,
-
-    /// The path to the CSV file containing the execution data.
-    #[clap(long, default_value = "report.csv")]
-    pub report_path: PathBuf,
-
-    #[clap(long)]
-    /// Whether to track the cycle count of precompiles.
-    pub precompile_tracking: bool,
-    #[clap(long)]
-    /// Whether to track the cycle count of opcodes.
-    pub opcode_tracking: bool,
+    /// PagerDuty integration key.
+    #[clap(long, env)]
+    pub pager_duty_integration_key: Option<String>,
 }
 
-impl HostArgs {
+impl Args {
     pub async fn as_config(&self) -> eyre::Result<Config> {
         // We don't need RPC when using cache with known chain ID, so we leave it as `Option<Url>`
         // here and decide on whether to panic later.
@@ -94,11 +90,10 @@ impl HostArgs {
             chain,
             genesis,
             rpc_url,
-            cache_dir: self.cache_dir.clone(),
-            custom_beneficiary: self.custom_beneficiary,
+            cache_dir: None,
+            custom_beneficiary: None,
             prove_mode: self.prove.then_some(ZKMProofKind::Compressed),
-            // prove_mode: self.prove.then_some(ZKMProofKind::Core),
-            opcode_tracking: self.opcode_tracking,
+            opcode_tracking: false,
         };
 
         Ok(config)
