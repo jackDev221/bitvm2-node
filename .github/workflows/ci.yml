@@ -113,7 +113,7 @@ jobs:
       - name: Copy Binary
         shell: pwsh
         run: |
-          if (${{ matrix.os }} -eq "windows-latest") {
+          if ("${{ matrix.os }}" -eq "windows-latest") {
             Copy-Item "target/${{ matrix.target }}/release/bitvm2-noded.exe" "release/${{ matrix.artifact_name }}"
           } else {
             Copy-Item "target/${{ matrix.target }}/release/bitvm2-noded" "release/${{ matrix.artifact_name }}"
