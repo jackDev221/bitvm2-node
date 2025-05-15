@@ -112,7 +112,7 @@ jobs:
 
       - name: Copy Binary
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             cp target/${{ matrix.target }}/release/bitvm2-noded.exe release/${{ matrix.artifact_name }}
           else
             cp target/${{ matrix.target }}/release/bitvm2-noded release/${{ matrix.artifact_name }}
