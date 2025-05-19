@@ -632,7 +632,8 @@ pub async fn recv_and_dispatch(
                     .ok_or(format!("graph {} not found", receive_data.graph_id))?;
             if ![GraphStatus::CommitteePresigned, GraphStatus::KickOff].contains(&graph_status) {
                 tracing::warn!(
-                    "receive KickoffSent but currently in {graph_status} Status, ignored"
+                    "receive KickoffSent for graph {} but currently in {graph_status} Status, ignored",
+                    receive_data.graph_id
                 );
                 return Ok(());
             }
@@ -696,7 +697,8 @@ pub async fn recv_and_dispatch(
                     .ok_or(format!("graph {} not found", receive_data.graph_id))?;
             if ![GraphStatus::CommitteePresigned, GraphStatus::KickOff].contains(&graph_status) {
                 tracing::warn!(
-                    "receive Take1Ready but currently in {graph_status} Status, ignored"
+                    "receive Take1Ready for graph {}, but currently in {graph_status} Status, ignored",
+                    receive_data.graph_id
                 );
                 return Ok(());
             }
@@ -707,6 +709,15 @@ pub async fn recv_and_dispatch(
             let operator_graph_pubkey: PublicKey = keypair.public_key().into();
             if graph.parameters.operator_pubkey == operator_graph_pubkey {
                 tracing::info!("Handle Take1Ready");
+                if !is_valid_withdraw(client, receive_data.instance_id, receive_data.graph_id)
+                    .await?
+                {
+                    tracing::warn!(
+                        "receive Take1Ready for graph {}, but kickoff is invalid, ignored",
+                        receive_data.graph_id
+                    );
+                    return Ok(());
+                }
                 if is_take1_timelock_expired(client, graph.kickoff.tx().compute_txid()).await? {
                     tracing::info!("sending Take1 ...");
                     let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
@@ -747,7 +758,8 @@ pub async fn recv_and_dispatch(
                 .contains(&graph_status)
             {
                 tracing::warn!(
-                    "receive ChallengeSent but currently in {graph_status} Status, ignored"
+                    "receive ChallengeSent for graph {} but currently in {graph_status} Status, ignored",
+                    receive_data.graph_id
                 );
                 return Ok(());
             }
@@ -769,7 +781,18 @@ pub async fn recv_and_dispatch(
                 let (proof, pubin, vk) =
                     get_groth16_proof(client, &receive_data.instance_id, &receive_data.graph_id)
                         .await?;
-                let proof_sigs = sign_proof(&vk, proof, pubin, &operator_wots_seckeys);
+                let mut proof_sigs = sign_proof(&vk, proof, pubin, &operator_wots_seckeys);
+                if !is_valid_withdraw(client, receive_data.instance_id, receive_data.graph_id)
+                    .await?
+                {
+                    // if kickoff is invalid, operator should not be able to generate a valid groth proof
+                    // TODO: replace mock proof with proof from ProofNetwork so that corrupt is not needed
+                    tracing::warn!(
+                        "graph {}, kickoff is invalid, generating fake proof...",
+                        receive_data.graph_id
+                    );
+                    corrupt_proof(&mut proof_sigs, &operator_wots_seckeys.1, 8);
+                }
                 let (assert_init_tx, assert_commit_txns, assert_final_tx) =
                     operator_sign_assert(keypair, &mut graph, &operator_wots_pubkeys, proof_sigs)?;
                 if !tx_on_chain(client, &assert_init_tx.compute_txid()).await? {
@@ -816,6 +839,15 @@ pub async fn recv_and_dispatch(
             let operator_graph_pubkey: PublicKey = keypair.public_key().into();
             if graph.parameters.operator_pubkey == operator_graph_pubkey {
                 tracing::info!("Handle Take2Ready");
+                if !is_valid_withdraw(client, receive_data.instance_id, receive_data.graph_id)
+                    .await?
+                {
+                    tracing::warn!(
+                        "receive Take2Ready for graph {}, but kickoff is invalid, ignored",
+                        receive_data.graph_id
+                    );
+                    return Ok(());
+                }
                 if is_take2_timelock_expired(client, graph.assert_final.tx().compute_txid()).await?
                 {
                     let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
@@ -855,7 +887,8 @@ pub async fn recv_and_dispatch(
                     .ok_or(format!("graph {} not found", receive_data.graph_id))?;
             if [GraphStatus::Take2, GraphStatus::Disprove].contains(&graph_status) {
                 tracing::warn!(
-                    "receive AssertSent but currently in {graph_status} Status, ignored"
+                    "receive AssertSent for graph {} but currently in {graph_status} Status, ignored",
+                    receive_data.graph_id
                 );
                 return Ok(());
             }
@@ -1076,7 +1109,8 @@ pub async fn recv_and_dispatch(
                     .ok_or(format!("graph {} not found", receive_data.graph_id))?;
             if graph_status != GraphStatus::CommitteePresigned {
                 tracing::warn!(
-                    "receive KickoffSent but currently in {graph_status} Status, ignored"
+                    "receive KickoffSent for graph {} but currently in {graph_status} Status, ignored",
+                    receive_data.graph_id
                 );
                 return Ok(());
             }
@@ -1102,7 +1136,8 @@ pub async fn recv_and_dispatch(
                     .ok_or(format!("graph {} not found", receive_data.graph_id))?;
             if ![GraphStatus::CommitteePresigned, GraphStatus::KickOff].contains(&graph_status) {
                 tracing::warn!(
-                    "receive ChallengeSent but currently in {graph_status} Status, ignored"
+                    "receive ChallengeSent for graph {} but currently in {graph_status} Status, ignored",
+                    receive_data.graph_id
                 );
                 return Ok(());
             }
@@ -1257,7 +1292,7 @@ async fn sync_graph(
     Ok(())
 }
 
-pub(crate) fn send_to_peer(
+pub fn send_to_peer(
     swarm: &mut Swarm<AllBehaviours>,
     message: GOATMessage,
 ) -> Result<MessageId, Box<dyn std::error::Error>> {
