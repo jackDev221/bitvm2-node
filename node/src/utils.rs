@@ -919,6 +919,7 @@ pub async fn store_graph(
             bridge_out_start_at: 0,
             bridge_out_from_addr,
             bridge_out_to_addr,
+            init_withdraw_txid: None,
             created_at: current_time_secs(),
             updated_at: current_time_secs(),
         })

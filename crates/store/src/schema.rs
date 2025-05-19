@@ -193,6 +193,7 @@ pub struct Graph {
     pub bridge_out_start_at: i64,
     pub bridge_out_from_addr: String,
     pub bridge_out_to_addr: String,
+    pub init_withdraw_txid: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -292,6 +293,7 @@ pub struct GrapFullData {
     pub bridge_out_from_addr: String,
     pub bridge_out_to_addr: String,
     pub operator: String,
+    pub init_withdraw_txid: Option<String>,
     pub updated_at: i64,
     pub created_at: i64,
 }
@@ -506,6 +508,16 @@ pub struct BlockProof {
     pub verifier_id: String,
     pub state: String,
     pub reason: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
+pub struct ContractInfo {
+    pub addr: String,
+    pub gap: i64,
+    pub from_height: i64,
+    pub extra: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

@@ -226,6 +226,7 @@ pub struct GrapRpcQueryData {
     pub take2_txid: Option<String>,
     pub disprove_txid: Option<String>,
     pub operator: String,
+    pub init_withdraw_txid: Option<String>,
     pub updated_at: i64,
     pub created_at: i64,
 }

@@ -11,6 +11,7 @@ use crate::{
         AssertSent, GOATMessage, GOATMessageContent, KickoffReady, KickoffSent, Take1Ready,
         Take2Ready, send_to_peer,
     },
+    env,
     env::get_network,
     middleware::AllBehaviours,
     utils::tx_on_chain,
@@ -20,7 +21,7 @@ use bitcoin::Txid;
 use bitcoin::consensus::encode::{deserialize_hex, serialize_hex};
 use bitcoin::hashes::Hash;
 use bitvm2_lib::actors::Actor;
-use client::chain::chain_adaptor::WithdrawStatus;
+use client::chain::chain_adaptor::{EventHandleFn, WithdrawStatus};
 use client::client::BitVM2Client;
 use goat::transactions::assert::utils::COMMIT_TX_NUM;
 use goat::{
@@ -28,10 +29,12 @@ use goat::{
     utils::num_blocks_per_network,
 };
 use libp2p::Swarm;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use store::{
-    BridgeInStatus, BridgePath, GraphStatus, GraphTickActionMetaData, MessageState, MessageType,
+    BridgeInStatus, BridgePath, ContractInfo, GraphStatus, GraphTickActionMetaData, MessageState,
+    MessageType,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -134,6 +137,56 @@ pub async fn get_initialized_graphs(
     // call L2 contract : getInitializedInstanceIds
     // returns Vec<(instance_id, graph_id)>
     Ok(client.get_initialized_ids().await?)
+}
+
+pub async fn fiter_events(
+    _swarm: &mut Swarm<AllBehaviours>,
+    client: &BitVM2Client,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let contract = env::get_goat_gateway_contract_from_env().to_string();
+    let mut tx = client.local_db.start_transaction().await?;
+    let mut contract_info = if let Some(contract_info) = tx.get_contract_info(&contract).await? {
+        contract_info
+    } else {
+        ContractInfo {
+            addr: contract,
+            gap: env::get_goat_event_filter_gap_from_env(),
+            from_height: env::get_goat_event_filter_gap_from_env(),
+            extra: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    };
+
+    let current_finalized_op = client.chain_service.adaptor.get_finalized_block_number().await?;
+    if current_finalized_op.is_none() {
+        return Err("fail to get finalize block, will try later".into());
+    }
+    let current_finalized = current_finalized_op.unwrap();
+
+    if contract_info.from_height >= current_finalized {
+        return Err(format!(
+            "Filter events from height:{} is high than current finalize height:{current_finalized}",
+            contract_info.from_height
+        )
+        .into());
+    }
+
+    let to_height = current_finalized.min(contract_info.from_height + contract_info.gap);
+    let func_map: HashMap<String, EventHandleFn> = HashMap::new();
+    //TODO add event add update graph
+    let _ = client
+        .chain_service
+        .adaptor
+        .fetch_and_handle_event(func_map, contract_info.from_height as u64, to_height as u64)
+        .await?;
+
+    contract_info.from_height = to_height + 1;
+    contract_info.created_at = current_time_secs();
+    contract_info.updated_at = current_time_secs();
+    tx.create_or_update_contract_info(&contract_info).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn scan_bridge_in_prepare(
@@ -810,6 +863,9 @@ pub async fn do_tick_action(
     swarm: &mut Swarm<AllBehaviours>,
     client: &BitVM2Client,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(err) = fiter_events(swarm, client).await {
+        warn!("fiter_events, err {:?}", err)
+    }
     if let Err(err) = scan_bridge_in_prepare(swarm, client).await {
         warn!("scan_bridge_in_prepare, err {:?}", err)
     }

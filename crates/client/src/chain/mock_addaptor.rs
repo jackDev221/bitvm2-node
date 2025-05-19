@@ -1,6 +1,7 @@
 use crate::chain::chain_adaptor::*;
 use alloy::primitives::TxHash;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub struct MockAdaptorConfig {}
@@ -150,6 +151,19 @@ impl ChainAdaptor for MockAdaptor {
     }
 
     async fn is_tx_execute_success(&self, _tx_hash: TxHash) -> anyhow::Result<bool> {
+        todo!()
+    }
+
+    async fn fetch_and_handle_event(
+        &self,
+        _fn_map: HashMap<String, EventHandleFn>,
+        _from_block: u64,
+        _to_block: u64,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    async fn get_finalized_block_number(&self) -> anyhow::Result<Option<i64>> {
         todo!()
     }
 }

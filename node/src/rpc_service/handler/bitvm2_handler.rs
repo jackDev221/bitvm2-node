@@ -618,6 +618,7 @@ pub fn convert_to_rpc_query_data(
         take2_txid: graph.take2_txid.clone(),
         disprove_txid: graph.disprove_txid.clone(),
         operator: graph.operator.clone(),
+        init_withdraw_txid: graph.init_withdraw_txid.clone(),
         updated_at: graph.updated_at,
         created_at: graph.created_at,
     };

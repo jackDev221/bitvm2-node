@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE graph SET init_withdraw_txid = ?, updated_at = ? WHERE graph_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "6a0f6da7167781c5eb4495f0c0438e7ced70c87cb054b0c7d6bb06ff1d514557"
+}

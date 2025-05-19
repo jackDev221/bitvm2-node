@@ -19,5 +19,8 @@ serde_json = { workspace = true }
 goat = { workspace = true }
 
 
+
+
 [dev-dependencies]
 tempfile = "3.19.1"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

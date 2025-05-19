@@ -362,6 +362,7 @@ pub enum GraphBridgePath {
         "disprove_txid": "string",
         "operator": "string",
         "raw_data": "string",
+        "init_withdraw_txid": "string",
         "updated_at": "number",
         "created_at": "number"
     }
@@ -402,7 +403,8 @@ pub enum GraphBridgePath {
                 "assert_final_txid": "string",
                 "take2_txid": "string",
                 "disprove_txid": "string",
-                "operator": "string",
+                "operator": "string", 
+                "init_withdraw_txid": "string",
                 "updated_at": "number",
                 "created_at": "number"
             },
@@ -432,7 +434,7 @@ pub enum GraphBridgePath {
   {
     "instance_id": "string",
     "graph_id": "string",
-    "graph_ipfs_committee_txns": ["string"],
+    "graph_ipfs_committee_txns": ["string"]
   }
   ```
 

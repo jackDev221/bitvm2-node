@@ -1,9 +1,9 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GrapFullData, Graph, GraphTickActionMetaData, Instance, Message,
-    MessageBroadcast, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofWithPis,
-    PubKeyCollect, PubKeyCollectMetaData,
+    COMMITTEE_PRE_SIGN_NUM, ContractInfo, GrapFullData, Graph, GraphTickActionMetaData, Instance,
+    Message, MessageBroadcast, Node, NodesOverview, NonceCollect, NonceCollectMetaData,
+    ProofWithPis, PubKeyCollect, PubKeyCollectMetaData,
 };
 
 use sqlx::migrate::Migrator;
@@ -306,6 +306,23 @@ impl<'a> StorageProcessor<'a> {
             current_time,
             instance_id
         )
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_graph_init_withdraw_txid(
+        &mut self,
+        graph_id: Uuid,
+        init_withdraw_txid: &str,
+    ) -> anyhow::Result<()> {
+        let current = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        sqlx::query!(
+            "UPDATE graph SET init_withdraw_txid = ?, updated_at = ? WHERE graph_id = ?",
+            init_withdraw_txid,
+            current,
+            graph_id
+        )
         .execute(self.conn())
         .await?;
         Ok(())
@@ -359,7 +376,7 @@ impl<'a> StorageProcessor<'a> {
             "SELECT  graph_id as \"graph_id:Uuid \", instance_id  as \"instance_id:Uuid \", graph_ipfs_base_url, \
              pre_kickoff_txid, pegin_txid, amount, status, kickoff_txid, challenge_txid, take1_txid, assert_init_txid, assert_commit_txids, \
               assert_final_txid, take2_txid, disprove_txid, operator, raw_data,bridge_out_start_at,  bridge_out_from_addr, bridge_out_to_addr,\
-               created_at, updated_at  FROM graph WHERE  graph_id = ?",
+              init_withdraw_txid,  created_at, updated_at  FROM graph WHERE  graph_id = ?",
             graph_id
         ).fetch_optional(self.conn()).await?;
         Ok(res)
@@ -374,7 +391,7 @@ impl<'a> StorageProcessor<'a> {
             graph.amount, graph.pegin_txid, graph.kickoff_txid, graph.challenge_txid,  \
             graph.take1_txid, graph.assert_init_txid, graph.assert_commit_txids, graph.assert_final_txid,  \
             graph.take2_txid, graph.disprove_txid, graph.operator, graph.bridge_out_start_at, graph.bridge_out_from_addr, bridge_out_to_addr,\
-            graph.created_at, graph.updated_at FROM graph  INNER JOIN  instance ON  graph.instance_id = instance.instance_id".to_string();
+            graph.init_withdraw_txid, graph.created_at, graph.updated_at FROM graph  INNER JOIN  instance ON  graph.instance_id = instance.instance_id".to_string();
 
         let mut graph_count_str = "SELECT count(graph.graph_id) as total_graphs FROM graph \
          INNER JOIN  instance ON  graph.instance_id = instance.instance_id"
@@ -467,7 +484,7 @@ impl<'a> StorageProcessor<'a> {
             "SELECT  graph_id as \"graph_id:Uuid \" , instance_id as \"instance_id:Uuid \", graph_ipfs_base_url, \
             pre_kickoff_txid,pegin_txid, amount, status,kickoff_txid, challenge_txid, take1_txid, assert_init_txid, assert_commit_txids, \
              assert_final_txid, take2_txid, disprove_txid, operator, raw_data, bridge_out_start_at,  bridge_out_from_addr, bridge_out_to_addr, \
-            created_at, updated_at FROM graph WHERE instance_id = ?",
+            init_withdraw_txid, created_at, updated_at FROM graph WHERE instance_id = ?",
             instance_id
         ).fetch_all(self.conn()).await?;
         Ok(res)
@@ -915,7 +932,7 @@ impl<'a> StorageProcessor<'a> {
         msg_times: i64,
     ) -> anyhow::Result<()> {
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-        let message_broadcast_info =sqlx::query_as!(
+        let message_broadcast_info = sqlx::query_as!(
             MessageBroadcast,
             "SELECT instance_id as \"instance_id:Uuid\", graph_id as \"graph_id:Uuid\", msg_type, msg_times, \
             created_at, updated_at FROM message_broadcast WHERE instance_id =? AND graph_id = ? ",
@@ -939,8 +956,8 @@ impl<'a> StorageProcessor<'a> {
             current_time
 
         )
-        .execute(self.conn())
-        .await?;
+            .execute(self.conn())
+            .await?;
         Ok(())
     }
 
@@ -955,8 +972,8 @@ impl<'a> StorageProcessor<'a> {
             instance_id,
             graph_id
         )
-        .fetch_optional(self.conn())
-        .await?;
+            .fetch_optional(self.conn())
+            .await?;
         // FIXME: we use a default proof here, will remove later
         match proof_with_pis {
             Some(proof) => Ok((proof.proof, proof.pis)),
@@ -1127,6 +1144,34 @@ impl<'a> StorageProcessor<'a> {
         .execute(self.conn())
         .await?;
 
+        Ok(())
+    }
+
+    pub async fn get_contract_info(&mut self, addr: &str) -> anyhow::Result<Option<ContractInfo>> {
+        Ok(sqlx::query_as!(
+            ContractInfo,
+            "SELECT addr, from_height, gap, extra, updated_at,  \
+       created_at FROM contract WHERE addr = ? ",
+            addr
+        )
+        .fetch_optional(self.conn())
+        .await?)
+    }
+
+    pub async fn create_or_update_contract_info(
+        &mut self,
+        contract_info: &ContractInfo,
+    ) -> anyhow::Result<()> {
+        let _ = sqlx::query!(
+            "INSERT OR REPLACE INTO contract (addr, gap, from_height, extra, updated_at, created_at)  \
+       VALUES  (?, ?, ?,  ?, ?, ?)",
+            contract_info.addr,
+            contract_info.gap,
+            contract_info.from_height,
+            contract_info.extra,
+            contract_info.created_at,
+            contract_info.updated_at,
+        ).execute(self.conn()).await;
         Ok(())
     }
 }

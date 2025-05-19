@@ -1,8 +1,11 @@
 use crate::chain::chain_adaptor::{
-    BitcoinTx, ChainAdaptor, OperatorData, PeginData, PeginStatus, WithdrawData, WithdrawStatus,
+    BitcoinTx, ChainAdaptor, EventHandleFn, OperatorData, PeginData, PeginStatus, WithdrawData,
+    WithdrawStatus,
 };
 use crate::chain::goat_adaptor::IGateway::IGatewayInstance;
-use alloy::primitives::TxHash;
+use alloy::eips::BlockNumberOrTag;
+use alloy::primitives::{B256, TxHash};
+use alloy::rpc::types::{Filter, Log};
 use alloy::{
     network::{Ethereum, EthereumWallet, NetworkWallet, eip2718::Encodable2718},
     primitives::{Address as EvmAddress, Bytes, ChainId, FixedBytes, U256},
@@ -14,6 +17,7 @@ use alloy::{
 };
 use anyhow::{bail, format_err};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::time;
@@ -83,6 +87,8 @@ sol!(
         mapping(bytes16 instanceId => bytes16[] graphIds)
         public instanceIdToGraphIds;
 
+        event Collect(uint256 indexed tokenId, address recipient, uint256 amount0, uint256 amount1);
+
         function getBlockHash(uint256 height) external view returns (bytes32);
         function parseBtcBlockHeader(bytes calldata rawHeader) public pure returns (bytes32 blockHash, bytes32 merkleRoot);
         function getInitializedInstanceIds() external view returns (bytes16[] memory retInstanceIds, bytes16[] memory retGraphIds);
@@ -124,7 +130,7 @@ impl GoatInitConfig {
 
 pub struct GoatAdaptor {
     chain_id: ChainId,
-    _gateway_address: EvmAddress,
+    gateway_address: EvmAddress,
     provider: RootProvider<Http<Client>>,
     gate_way: IGatewayInstance<Http<Client>, RootProvider<Http<Client>>>,
     signer: EthereumWallet,
@@ -200,6 +206,24 @@ impl GoatAdaptor {
         }
         Ok(*tx_hash)
     }
+
+    async fn get_sol_events(
+        &self,
+        event_signs: &[B256],
+        from_block: u64,
+        to_block: u64,
+    ) -> anyhow::Result<Vec<Log>> {
+        let filter = Filter::new()
+            .address(self.gateway_address)
+            .from_block(BlockNumberOrTag::from(from_block))
+            .to_block(BlockNumberOrTag::from(to_block))
+            .event_signature::<Vec<B256>>(event_signs.to_vec());
+        let results = self.provider.get_logs(&filter).await;
+        if let Err(rpc_error) = results {
+            return Err(rpc_error.into());
+        }
+        Ok(results.unwrap())
+    }
 }
 
 impl From<BitcoinTx> for IGateway::BitcoinTx {
@@ -241,10 +265,10 @@ impl From<IGateway::OperatorData> for OperatorData {
             operator_pubkey_prefix: value.operatorPubkeyPrefix.0[0],
             operator_pubkey: value.operatorPubkey.0,
             pegin_txid: value.peginTxid.0,
-            pre_kickoff_txid: value.kickoffTxid.0,
+            pre_kickoff_txid: value.preKickoffTxid.0,
             kickoff_txid: value.kickoffTxid.0,
             take1_txid: value.take1Txid.0,
-            assert_init_txid: value.take1Txid.0,
+            assert_init_txid: value.assertInitTxid.0,
             assert_commit_txids: value.assertCommitTxids.map(|v| v.0),
             assert_final_txid: value.assertFinalTxid.0,
             take2_txid: value.take2Txid.0,
@@ -637,6 +661,45 @@ impl ChainAdaptor for GoatAdaptor {
         }
         Ok(false)
     }
+
+    async fn fetch_and_handle_event(
+        &self,
+        fn_map: HashMap<String, EventHandleFn>,
+        from_block: u64,
+        to_block: u64,
+    ) -> anyhow::Result<()> {
+        let keys: Vec<B256> = fn_map.keys().map(|v| B256::from_str(v).expect("")).collect();
+        let logs = self.get_sol_events(&keys, from_block, to_block).await;
+        for log_item in logs.unwrap() {
+            if let Some(topic) = log_item.topic0() {
+                if let Some(event_handle) = fn_map.get(&topic.to_string()) {
+                    tracing::info!(
+                        "Watch event {} at tx hash:{:?}",
+                        event_handle.name,
+                        log_item.transaction_hash
+                    );
+                    (event_handle.handle)(log_item.clone()).await;
+                } else {
+                    tracing::warn!(
+                        "Watch event of topic {} at tx hash:{:?} not handler",
+                        topic.to_string(),
+                        log_item.transaction_hash
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn get_finalized_block_number(&self) -> anyhow::Result<Option<i64>> {
+        if let Some(block) =
+            self.provider.get_block_by_number(BlockNumberOrTag::Finalized, false).await?
+        {
+            Ok(Some(block.header.number as i64))
+        } else {
+            Ok(None)
+        }
+    }
 }
 impl GoatAdaptor {
     pub fn new(config: GoatInitConfig) -> Self {
@@ -654,11 +717,71 @@ impl GoatAdaptor {
         };
         let provider = ProviderBuilder::new().on_http(config.rpc_url);
         Self {
-            _gateway_address: config.gateway_address,
+            gateway_address: config.gateway_address,
             provider: provider.clone(),
             gate_way: IGateway::new(config.gateway_address, provider),
             signer: EthereumWallet::new(signer),
             chain_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::chain::chain_adaptor::{ChainAdaptor, CollectEventInfo, EventHandleFn};
+    use crate::chain::goat_adaptor::{GoatAdaptor, GoatInitConfig, IGateway};
+    use alloy::sol_types::SolEvent;
+    use alloy::transports::http::reqwest::Url;
+    use std::collections::HashMap;
+    use tracing_subscriber::EnvFilter;
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_filter_log() -> anyhow::Result<()> {
+        let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
+        tracing::info!("Starting test_filter_log test");
+
+        let goat_adaper = GoatAdaptor::new(GoatInitConfig {
+            rpc_url: "https://rpc.testnet3.goat.network".parse::<Url>().expect("decode url"),
+            gateway_address: "0xEdF5893bBFa684aB152090cA56C639C73F23e1Bc"
+                .parse()
+                .expect("parse contract address"),
+            private_key: None,
+            chain_id: 48816_u32,
+        });
+        tracing::info!("GoatAdaptor initialized successfully");
+
+        // let mut function_map: HashMap<String, AsyncEventHandleFn> = HashMap::new();
+        let aa = 100;
+        let mut func_map: HashMap<String, EventHandleFn> = HashMap::new();
+        func_map.insert(
+            IGateway::Collect::SIGNATURE_HASH.to_string(),
+            EventHandleFn {
+                name: "IGateway::Collect::SIGNATURE_HASH".to_string(),
+                handle: Box::new(move |x| {
+                    Box::pin(async move {
+                        let _log_decode = x
+                            .log_decode::<IGateway::Collect>()
+                            .expect("fail to decod IGateway::Collect");
+
+                        let collect_event = CollectEventInfo {
+                            tx_hash: x.transaction_hash.unwrap().to_string(),
+                            recipient: x.inner.address.to_string(),
+                        };
+                        //
+                        let a_str =
+                            format!("{}_{}_{}", collect_event.tx_hash, collect_event.recipient, aa);
+                        tracing::info!("Event handler called with data: {}", a_str);
+                        true
+                    })
+                }),
+            },
+        );
+
+        tracing::info!("Event handler registered successfully");
+
+        tracing::info!("Starting to fetch and handle events from block 4235727 to 4397184");
+        goat_adaper.fetch_and_handle_event(func_map, 4235727, 4397184).await?;
+        tracing::info!("Test completed successfully");
+
+        Ok(())
     }
 }

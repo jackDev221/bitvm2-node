@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO contract (addr, gap, from_height, extra, updated_at, created_at)  VALUES  (?, ?, ?,  ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "1c6c2db88e7624ea64fbd5cf42f7ca4479a46206472c81aa14037d5c53ab8a20"
+}

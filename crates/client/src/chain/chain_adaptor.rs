@@ -1,7 +1,10 @@
 use crate::chain::goat_adaptor::{GoatAdaptor, GoatInitConfig};
 use crate::chain::mock_addaptor::{MockAdaptor, MockAdaptorConfig};
 use alloy::primitives::{TxHash, U256};
+use alloy::rpc::types::Log;
 use async_trait::async_trait;
+use std::collections::HashMap;
+use std::pin::Pin;
 use uuid::Uuid;
 
 #[async_trait]
@@ -96,6 +99,14 @@ pub trait ChainAdaptor: Send + Sync {
     ) -> anyhow::Result<bool>;
 
     async fn is_tx_execute_success(&self, tx_hash: TxHash) -> anyhow::Result<bool>;
+    async fn fetch_and_handle_event(
+        &self,
+        fn_map: HashMap<String, EventHandleFn>,
+        from_block: u64,
+        to_block: u64,
+    ) -> anyhow::Result<()>;
+
+    async fn get_finalized_block_number(&self) -> anyhow::Result<Option<i64>>;
 }
 #[derive(Eq, PartialEq, Clone, Copy)]
 pub enum GoatNetwork {
@@ -187,6 +198,18 @@ pub struct BitcoinTx {
     pub input_vector: Vec<u8>,
     pub output_vector: Vec<u8>,
     pub lock_time: u32,
+}
+
+// CollectEventInfo just for Test
+#[derive(Clone)]
+pub struct CollectEventInfo {
+    pub tx_hash: String,
+    pub recipient: String,
+}
+
+pub struct EventHandleFn {
+    pub name: String,
+    pub handle: Box<dyn Fn(Log) -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>,
 }
 
 pub fn get_chain_adaptor(

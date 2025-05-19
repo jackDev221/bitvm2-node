@@ -22,6 +22,9 @@ pub const ENV_GOAT_CHAIN_URL: &str = "GOAT_CHAIN_URL";
 pub const ENV_GOAT_GATEWAY_CONTRACT_ADDRESS: &str = "GOAT_GATEWAY_CONTRACT_ADDRESS";
 /// Relayer
 pub const ENV_GOAT_PRIVATE_KEY: &str = "GOAT_PRIVATE_KEY";
+
+pub const ENV_GOAT_EVENT_FILTER_FROM: &str = "GOAT_EVENT_FILTER_FROM";
+pub const ENV_GOAT_EVENT_FILTER_GAP: &str = "GOAT_EVENT_FILTER_GAP";
 /// Operator
 pub const ENV_GOAT_ADDRESS: &str = "GOAT_ADDRESS";
 /// Operator(private key), Relayer(private key),  Committee(seed)
@@ -258,10 +261,26 @@ pub fn get_goat_url_from_env() -> Url {
 
 pub fn get_goat_gateway_contract_from_env() -> EvmAddress {
     let gateway_address_str = std::env::var(ENV_GOAT_GATEWAY_CONTRACT_ADDRESS)
-        .expect("Failed to read {ENV_GOAT_GATEWAY_CONTRACT_ADDRESS} variable");
+        .expect(&format!("Failed to read {ENV_GOAT_GATEWAY_CONTRACT_ADDRESS} variable"));
     gateway_address_str
         .parse::<EvmAddress>()
-        .expect("Failed to parse {gateway_address_str} to address")
+        .expect(&format!("Failed to parse {gateway_address_str} to address"))
+}
+
+pub fn get_goat_event_filter_from_from_env() -> i64 {
+    let event_filter_from_str = std::env::var(ENV_GOAT_EVENT_FILTER_FROM)
+        .expect(&format!("Failed to read {ENV_GOAT_EVENT_FILTER_FROM} variable"));
+    event_filter_from_str
+        .parse::<i64>()
+        .expect(&format!("Failed to parse {event_filter_from_str} to i64"))
+}
+
+pub fn get_goat_event_filter_gap_from_env() -> i64 {
+    let event_filter_gap_str = std::env::var(ENV_GOAT_EVENT_FILTER_GAP)
+        .expect(&format!("Failed to read {ENV_GOAT_EVENT_FILTER_GAP} variable"));
+    event_filter_gap_str
+        .parse::<i64>()
+        .expect(&format!("Failed to parse {event_filter_gap_str} to address"))
 }
 
 pub async fn goat_config_from_env() -> GoatInitConfig {
