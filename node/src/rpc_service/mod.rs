@@ -3,7 +3,8 @@ mod bitvm2;
 mod handler;
 mod node;
 
-use crate::env::{get_goat_network, get_network, goat_config_from_env};
+use crate::client::{BTCClient, create_local_db};
+use crate::env::get_network;
 use crate::metrics_service::{MetricsState, metrics_handler, metrics_middleware};
 use crate::rpc_service::handler::{bitvm2_handler::*, node_handler::*};
 use axum::body::Body;
@@ -15,20 +16,19 @@ use axum::{
     Router, middleware,
     routing::{get, post},
 };
+pub use bitvm2::P2pUserData;
 use bitvm2_lib::actors::Actor;
-use client::client::BitVM2Client;
 use http::{HeaderMap, Method, StatusCode};
 use http_body_util::BodyExt;
 use prometheus_client::registry::Registry;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
+use store::localdb::LocalDB;
 use tokio::net::TcpListener;
 use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::Level;
-
-pub use bitvm2::P2pUserData;
 
 #[inline(always)]
 pub fn current_time_secs() -> i64 {
@@ -36,8 +36,8 @@ pub fn current_time_secs() -> i64 {
 }
 
 pub struct AppState {
-    // TODO unsafe rpc api use bitvm2_client
-    pub bitvm2_client: BitVM2Client,
+    pub local_db: LocalDB,
+    pub btc_client: BTCClient,
     pub metrics_state: MetricsState,
     pub actor: Actor,
     pub peer_id: String,
@@ -46,22 +46,14 @@ pub struct AppState {
 impl AppState {
     pub async fn create_arc_app_state(
         db_path: &str,
-        ipfs_url: &str,
         actor: Actor,
         peer_id: String,
         registry: Arc<Mutex<Registry>>,
     ) -> anyhow::Result<Arc<AppState>> {
-        let bitvm2_client = BitVM2Client::new(
-            db_path,
-            None,
-            get_network(),
-            get_goat_network(),
-            goat_config_from_env().await,
-            ipfs_url,
-        )
-        .await;
+        let local_db = create_local_db(db_path).await;
+        let btc_client = BTCClient::new(None, get_network());
         let metrics_state = MetricsState::new(registry);
-        Ok(Arc::new(AppState { bitvm2_client, metrics_state, actor, peer_id }))
+        Ok(Arc::new(AppState { local_db, btc_client, metrics_state, actor, peer_id }))
     }
 }
 
@@ -74,13 +66,11 @@ async fn root() -> &'static str {
 pub async fn serve(
     addr: String,
     db_path: String,
-    ipfs_url: String,
     actor: Actor,
     peer_id: String,
     registry: Arc<Mutex<Registry>>,
 ) -> anyhow::Result<()> {
-    let app_state =
-        AppState::create_arc_app_state(&db_path, &ipfs_url, actor, peer_id, registry).await?;
+    let app_state = AppState::create_arc_app_state(&db_path, actor, peer_id, registry).await?;
     let server = Router::new()
         .route("/", get(root))
         .route("/v1/nodes", post(create_node))
@@ -206,10 +196,6 @@ mod tests {
         listener.local_addr().unwrap().to_string()
     }
 
-    fn local_ipfs_url() -> String {
-        "http://localhost:5001".to_string()
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn test_nodes_api() -> Result<(), Box<dyn std::error::Error>> {
         init_tracing();
@@ -223,7 +209,6 @@ mod tests {
         tokio::spawn(rpc_service::serve(
             addr.clone(),
             temp_file(),
-            local_ipfs_url(),
             actor,
             peer_id.clone(),
             Arc::new(Mutex::new(Registry::default())),
@@ -279,7 +264,6 @@ mod tests {
         tokio::spawn(rpc_service::serve(
             addr.clone(),
             temp_file(),
-            local_ipfs_url(),
             actor,
             peer_id,
             Arc::new(Mutex::new(Registry::default())),
