@@ -1,4 +1,6 @@
-use crate::env::{self, get_local_node_info, get_node_pubkey};
+use crate::env::{
+    self, SYNC_GRAPH_INTERVAL, SYNC_GRAPH_MAX_WAIT_SECS, get_local_node_info, get_node_pubkey,
+};
 use crate::middleware::AllBehaviours;
 use crate::relayer_action::do_tick_action;
 use crate::rpc_service::current_time_secs;
@@ -211,7 +213,7 @@ pub async fn recv_and_dispatch(
     swarm: &mut Swarm<AllBehaviours>,
     client: &BitVM2Client,
     actor: Actor,
-    peer_id: PeerId,
+    from_peer_id: PeerId,
     id: MessageId,
     message: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -224,7 +226,7 @@ pub async fn recv_and_dispatch(
         return Ok(());
     }
 
-    update_node_timestamp(client, &peer_id.to_string()).await?;
+    update_node_timestamp(client, &from_peer_id.to_string()).await?;
 
     let message: GOATMessage = serde_json::from_slice(message)?;
     let content: GOATMessageContent = message.to_typed()?;
@@ -235,21 +237,21 @@ pub async fn recv_and_dispatch(
             &message.actor.to_string(),
             data.graph_id,
             id,
-            peer_id
+            from_peer_id
         ),
         GOATMessageContent::GraphFinalize(data) => tracing::info!(
             "Got message: {}:GraphFinalize {}  with id: {} from peer: {:?}",
             &message.actor.to_string(),
             data.graph_id,
             id,
-            peer_id
+            from_peer_id
         ),
         _ => tracing::info!(
             "Got message: {}:{} with id: {} from peer: {:?}",
             &message.actor.to_string(),
             String::from_utf8_lossy(&message.content),
             id,
-            peer_id
+            from_peer_id
         ),
     }
     // TODO: validate message
@@ -259,6 +261,11 @@ pub async fn recv_and_dispatch(
         (GOATMessageContent::CreateInstance(receive_data), Actor::Committee) => {
             tracing::info!("Handle CreateInstance");
             // TODO: check: user inputs must be segwit addresses
+            // TODO: Is it necessary to restrict only relayers to broadcasting CreateInstance?
+            // if !validate_actor(&from_peer_id.to_bytes(), Actor::Relayer).await? {
+            //     tracing::warn!("receive CreateInstance message but not from Relayer, ignored");
+            //     return Ok(());
+            // }
             let instance_id = receive_data.instance_id;
             let master_key = CommitteeMasterKey::new(env::get_bitvm_key()?);
             let keypair = master_key.keypair_for_instance(instance_id);
@@ -277,7 +284,12 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::CreateGraphPrepare(receive_data), Actor::Operator) => {
             tracing::info!("Handle CreateGraphPrepare");
-            // TODO: check: the message must come from committee
+            if !validate_actor(&from_peer_id.to_bytes(), Actor::Committee).await? {
+                tracing::warn!(
+                    "receive CreateGraphPrepare message but not from Committee, ignored"
+                );
+                return Ok(());
+            }
             store_committee_pubkeys(
                 client,
                 receive_data.instance_id,
@@ -353,7 +365,12 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::CreateGraph(receive_data), Actor::Committee) => {
             tracing::info!("Handle CreateGraph");
-            // TODO: check: the message must come from whitelisted operator
+            if !validate_actor(&from_peer_id.to_bytes(), Actor::Operator).await? {
+                tracing::warn!(
+                    "receive CreateGraph message but not from whitelisted Operator, ignored"
+                );
+                return Ok(());
+            }
             let graph = Bitvm2Graph::from_simplified(receive_data.graph)?;
             store_graph(
                 client,
@@ -420,7 +437,10 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::NonceGeneration(receive_data), Actor::Committee) => {
             tracing::info!("Handle NonceGeneration");
-            // TODO: check that the message must come from committee
+            if !validate_actor(&from_peer_id.to_bytes(), Actor::Committee).await? {
+                tracing::warn!("receive NonceGeneration message but not from Committee, ignored");
+                return Ok(());
+            }
             store_committee_pub_nonces(
                 client,
                 receive_data.instance_id,
@@ -463,7 +483,10 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::CommitteePresign(receive_data), Actor::Operator) => {
             tracing::info!("Handle CommitteePresign");
-            // TODO: check that the message must come from committee
+            if !validate_actor(&from_peer_id.to_bytes(), Actor::Committee).await? {
+                tracing::warn!("receive CommitteePresign message but not from Committee, ignored");
+                return Ok(());
+            }
             if Some((receive_data.instance_id, receive_data.graph_id))
                 == statics::current_processing_graph()
             {
@@ -549,7 +572,12 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::GraphFinalize(receive_data), _) => {
             tracing::info!("Handle GraphFinalize");
-            // TODO: check: the message must come from whitelisted operator
+            if !validate_actor(&from_peer_id.to_bytes(), Actor::Operator).await? {
+                tracing::warn!(
+                    "receive GraphFinalize message but not from whitelisted Operator, ignored"
+                );
+                return Ok(());
+            }
             // TODO: validate graph & ipfs
             let graph = Bitvm2Graph::from_simplified(receive_data.graph)?;
             store_graph(
@@ -575,6 +603,15 @@ pub async fn recv_and_dispatch(
         // peg-out
         // KickoffReady sent by relayer
         (GOATMessageContent::KickoffReady(receive_data), Actor::Operator) => {
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph_status =
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
@@ -624,8 +661,15 @@ pub async fn recv_and_dispatch(
         // KickoffSent sent by relayer
         (GOATMessageContent::KickoffSent(receive_data), Actor::Challenger) => {
             tracing::info!("Handle KickoffSent");
-            sync_graph(swarm, client, receive_data.instance_id, receive_data.graph_id, 5, 30)
-                .await?;
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph_status =
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
@@ -691,6 +735,15 @@ pub async fn recv_and_dispatch(
         }
         // Take1Ready sent by relayer
         (GOATMessageContent::Take1Ready(receive_data), Actor::Operator) => {
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph_status =
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
@@ -749,7 +802,15 @@ pub async fn recv_and_dispatch(
         // ChallengeSent sent by challenger
         // if challenger
         (GOATMessageContent::ChallengeSent(receive_data), Actor::Operator) => {
-            tracing::info!("Handle ChallengeSent");
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph_status =
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
@@ -773,6 +834,7 @@ pub async fn recv_and_dispatch(
                 )
                 .await?
             {
+                tracing::info!("Handle ChallengeSent");
                 tracing::info!("sending Assert ...");
                 let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
                 let keypair = master_key.keypair_for_graph(receive_data.graph_id);
@@ -831,7 +893,15 @@ pub async fn recv_and_dispatch(
         }
         // Take2Ready sent by relayer
         (GOATMessageContent::Take2Ready(receive_data), Actor::Operator) => {
-            tracing::info!("Handle Take2Ready");
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let mut graph =
                 get_graph(client, receive_data.instance_id, receive_data.graph_id).await?;
             let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
@@ -879,8 +949,15 @@ pub async fn recv_and_dispatch(
         // AssertSent sent by relayer
         (GOATMessageContent::AssertSent(receive_data), Actor::Challenger) => {
             tracing::info!("Handle AssertSent");
-            sync_graph(swarm, client, receive_data.instance_id, receive_data.graph_id, 5, 30)
-                .await?;
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph_status =
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
@@ -1029,6 +1106,15 @@ pub async fn recv_and_dispatch(
         // Operator recycle prekickoff utxo
         (GOATMessageContent::Take1Sent(receive_data), Actor::Operator) => {
             tracing::info!("Handle Take1Sent");
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph = get_graph(client, receive_data.instance_id, receive_data.graph_id).await?;
             if tx_on_chain(client, &graph.take1.tx().compute_txid()).await? {
                 update_graph_fields(
@@ -1045,6 +1131,15 @@ pub async fn recv_and_dispatch(
                     get_my_graph_for_instance(client, receive_data.instance_id, get_node_pubkey()?)
                         .await?
                 {
+                    sync_graph(
+                        swarm,
+                        client,
+                        receive_data.instance_id,
+                        graph_id,
+                        SYNC_GRAPH_INTERVAL,
+                        SYNC_GRAPH_MAX_WAIT_SECS,
+                    )
+                    .await?;
                     let graph = get_graph(client, receive_data.instance_id, graph_id).await?;
                     let prekickoff_txid = graph.pre_kickoff.tx().compute_txid();
                     if outpoint_available(client, &prekickoff_txid, 0).await? {
@@ -1065,6 +1160,15 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::Take2Sent(receive_data), Actor::Operator) => {
             tracing::info!("Handle Take2Sent");
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph = get_graph(client, receive_data.instance_id, receive_data.graph_id).await?;
             if tx_on_chain(client, &graph.take2.tx().compute_txid()).await? {
                 update_graph_fields(
@@ -1081,6 +1185,15 @@ pub async fn recv_and_dispatch(
                     get_my_graph_for_instance(client, receive_data.instance_id, get_node_pubkey()?)
                         .await?
                 {
+                    sync_graph(
+                        swarm,
+                        client,
+                        receive_data.instance_id,
+                        graph_id,
+                        SYNC_GRAPH_INTERVAL,
+                        SYNC_GRAPH_MAX_WAIT_SECS,
+                    )
+                    .await?;
                     let graph = get_graph(client, receive_data.instance_id, graph_id).await?;
                     let prekickoff_txid = graph.pre_kickoff.tx().compute_txid();
                     if outpoint_available(client, &prekickoff_txid, 0).await? {
@@ -1103,6 +1216,15 @@ pub async fn recv_and_dispatch(
         // Other participants update graph status
         (GOATMessageContent::KickoffSent(receive_data), _) => {
             tracing::info!("Handle KickoffSent");
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph_status =
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
@@ -1130,6 +1252,15 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::ChallengeSent(receive_data), _) => {
             tracing::info!("Handle ChallengeSent");
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph_status =
                 get_graph_status(client, receive_data.instance_id, receive_data.graph_id)
                     .await?
@@ -1163,6 +1294,15 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::Take1Sent(receive_data), _) => {
             tracing::info!("Handle Take1Sent");
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph = get_graph(client, receive_data.instance_id, receive_data.graph_id).await?;
             if tx_on_chain(client, &graph.take1.tx().compute_txid()).await? {
                 update_graph_fields(
@@ -1180,6 +1320,15 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::Take2Sent(receive_data), _) => {
             tracing::info!("Handle Take2Sent");
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph = get_graph(client, receive_data.instance_id, receive_data.graph_id).await?;
             if tx_on_chain(client, &graph.take2.tx().compute_txid()).await? {
                 update_graph_fields(
@@ -1197,6 +1346,15 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::DisproveSent(receive_data), _) => {
             tracing::info!("Handle DisproveSent");
+            sync_graph(
+                swarm,
+                client,
+                receive_data.instance_id,
+                receive_data.graph_id,
+                SYNC_GRAPH_INTERVAL,
+                SYNC_GRAPH_MAX_WAIT_SECS,
+            )
+            .await?;
             let graph = get_graph(client, receive_data.instance_id, receive_data.graph_id).await?;
             if validate_disprove(
                 client,
@@ -1246,7 +1404,10 @@ pub async fn recv_and_dispatch(
         }
         (GOATMessageContent::SyncGraph(receive_data), _) => {
             tracing::info!("Handle SyncGraph...  ");
-            // TODO: check: the message must come from relayer
+            if !validate_actor(&from_peer_id.to_bytes(), Actor::Relayer).await? {
+                tracing::warn!("receive SyncGraph message but not from Relayer, ignored");
+                return Ok(());
+            }
             store_graph(
                 client,
                 receive_data.instance_id,
