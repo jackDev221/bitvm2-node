@@ -4,10 +4,11 @@ use crate::rpc_service::node::ALIVE_TIME_JUDGE_THRESHOLD;
 use crate::rpc_service::{AppState, current_time_secs};
 use crate::utils::node_p2wsh_address;
 use alloy::primitives::Address as EvmAddress;
+use anyhow::bail;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use bitcoin::address::NetworkUnchecked;
-use bitcoin::consensus::encode::serialize_hex;
+use bitcoin::consensus::encode::{deserialize_hex, serialize_hex};
 use bitcoin::{Address, AddressType};
 use bitcoin::{Network, PublicKey, Txid};
 use bitvm2_lib::types::Bitvm2Graph;
@@ -199,7 +200,17 @@ pub async fn get_graph_tx(
             }
             IpfsTxName::AssertInit => serialize_hex(bitvm2_graph.assert_init.tx()),
             IpfsTxName::AssertFinal => serialize_hex(bitvm2_graph.assert_final.tx()),
-            IpfsTxName::Challenge => serialize_hex(bitvm2_graph.challenge.tx()),
+            IpfsTxName::Challenge => {
+                let mut ori_tx_hex = serialize_hex(bitvm2_graph.challenge.tx());
+                if let Some(challenge_txid) = graph.challenge_txid {
+                    if let Ok(tx_hex) =
+                        get_btc_tx_hex(&app_state.btc_client.esplora, &challenge_txid).await
+                    {
+                        ori_tx_hex = tx_hex
+                    }
+                }
+                ori_tx_hex
+            }
             IpfsTxName::Disprove => serialize_hex(bitvm2_graph.disprove.tx()),
             IpfsTxName::Kickoff => serialize_hex(bitvm2_graph.kickoff.tx()),
             IpfsTxName::Pegin => serialize_hex(bitvm2_graph.pegin.tx()),
@@ -234,7 +245,7 @@ pub async fn get_graph_txn(
             return Err(format!("grap with graph_id:{graph_id} raw data is none").into());
         }
         let bitvm2_graph: Bitvm2Graph = serde_json::from_str(graph.raw_data.unwrap().as_str())?;
-        let resp = GraphTxnGetResponse {
+        let mut resp = GraphTxnGetResponse {
             assert_commit0: serialize_hex(bitvm2_graph.assert_commit.commit_txns[0].tx()),
             assert_commit1: serialize_hex(bitvm2_graph.assert_commit.commit_txns[1].tx()),
             assert_commit2: serialize_hex(bitvm2_graph.assert_commit.commit_txns[2].tx()),
@@ -248,6 +259,12 @@ pub async fn get_graph_txn(
             take1: serialize_hex(bitvm2_graph.take1.tx()),
             take2: serialize_hex(bitvm2_graph.take2.tx()),
         };
+        if let Some(challenge_txid) = graph.challenge_txid {
+            if let Ok(tx_hex) = get_btc_tx_hex(&app_state.btc_client.esplora, &challenge_txid).await
+            {
+                resp.challenge = tx_hex;
+            }
+        }
         Ok::<GraphTxnGetResponse, Box<dyn std::error::Error>>(resp)
     };
     match async_fn().await {
@@ -362,6 +379,7 @@ pub async fn get_instances(
 
         let mut items = vec![];
         for mut instance in instances {
+            instance.reverse_btc_txid();
             let (confirmations, target_confirmations) = get_tx_confirmation_info(
                 &app_state.btc_client.esplora,
                 instance.pegin_txid.clone(),
@@ -369,7 +387,6 @@ pub async fn get_instances(
                 6,
             )
             .await?;
-            instance.reverse_btc_txid();
             let utxo: Vec<UTXO> = serde_json::from_str(&instance.input_uxtos).unwrap();
 
             items.push(InstanceWrap {
@@ -656,4 +673,12 @@ fn is_segwit_address(address: &str, network: &str) -> anyhow::Result<bool> {
         addr.address_type(),
         Some(AddressType::P2wpkh) | Some(AddressType::P2wsh) | Some(AddressType::P2tr)
     ))
+}
+
+async fn get_btc_tx_hex(client: &AsyncClient, tx_id: &str) -> anyhow::Result<String> {
+    let tx_id: Txid = deserialize_hex(tx_id)?;
+    if let Some(tx) = client.get_tx(&tx_id).await? {
+        return Ok(bitcoin::consensus::encode::serialize_hex(&tx));
+    }
+    bail!("not found tx:{} on chain", tx_id.to_string());
 }
