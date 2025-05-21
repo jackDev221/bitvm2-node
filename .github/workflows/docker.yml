@@ -5,9 +5,12 @@ on:
     branches: [ main ]  # or your deployment branch
   workflow_dispatch:    # allow manual trigger
 
+env:
+  IMAGE_REPO: ${{ github.repository }}
+
 jobs:
   build-and-push:
-    runs-on: alpine:3.10
+    runs-on: ubuntu-latest
 
     permissions:
       contents: read
@@ -23,8 +26,19 @@ jobs:
           toolchain: nightly
           override: true
 
+      - name: Extract version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version =' Cargo.toml | head -n1 | sed -E 's/version = "(.*)"/\1/')
+          echo "CARGO_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Using version: $VERSION"
+
       - name: Build binary
         run: cargo build --release
+
+      - name: Set lowercase repo name
+        id: lowercase
+        run: echo "REPO_LOWER=$(echo '${{ env.IMAGE_REPO }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Log in to GitHub Container Registry (ghcr.io)
         uses: docker/login-action@v3
@@ -41,4 +55,6 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          tags: |
+            ghcr.io/${{ env.REPO_LOWER }}:latest
+            ghcr.io/${{ env.REPO_LOWER }}:${{ env.CARGO_VERSION }}
