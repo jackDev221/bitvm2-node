@@ -5,46 +5,6 @@ A universal node for Operator, Challenger and Covenant Signer.
 
 See [Node](node/README.md).
 
-## Architecture Overview
-
-```mermaid
-stateDiagram-v2
-    [*] --> RPCServer 
-
-    state RPCServer {
-        state Middleware {
-            [*] --> Identity
-            Identity --> behaviour
-            [*] --> MetricServer 
-        }
-        behaviour --> Store
-        behaviour --> MessageHandler
-    }
-       
-    state MessageHandler {
-        [*] --> message 
-        message --> Actor 
-    }
-    state Actor {
-        [*] --> Committee 
-        [*] --> Operator 
-        [*] --> Challenger
-        [*] --> More... 
-    }
-    
-    state Identity {
-        [*] --> client
-        [*] --> p2p(KAD)
-        [*] --> musig2
-    }
-
-    state Store {
-        [*] --> payload 
-        payload --> LocalDB(Mem)
-        payload --> IPFS
-    }
-```
-
 ## Roles
 
 There are three main roles in this protocol, Committee, Operator and Challenger.

@@ -46,4 +46,4 @@ apt-get update
 apt-get install -y procps
 # A terminal-based program (like watch, top, less, etc.) runs in an environment, TERM environment variable should be set
 export TERM=xterm
-watch -n 2 "$BTC -generate 1 && $BTC keypoolrefill"
+watch -n 2 "$BTC -generate 1 && $BTC walletpassphrase $WALLET_PASSPHRASE 600 && $BTC keypoolrefill"

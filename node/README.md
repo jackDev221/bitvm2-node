@@ -5,7 +5,9 @@
 1. Install bitvm2-noded
 
 ```aiignore
-cargo install --bin bitvm2-noded --git https://github.com/GOATNetwork/bitvm2-node
+git clone https://github.com/GOATNetwork/bitvm2-node
+cd bitvm2-node
+cargo install --bin bitvm2-noded
 ```
 
 2. Run a bootnode.
