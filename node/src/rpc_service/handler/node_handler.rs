@@ -6,6 +6,7 @@ use crate::rpc_service::node::{
 use crate::rpc_service::{AppState, current_time_secs};
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use bitvm2_lib::actors::Actor;
 use http::StatusCode;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -50,9 +51,16 @@ pub async fn get_nodes(
         storage_process.update_node_timestamp(&app_state.peer_id, current_time_secs()).await?;
         let time_threshold = current_time_secs() - ALIVE_TIME_JUDGE_THRESHOLD;
         let (_, goat_addr) = reflect_goat_address(query_params.goat_addr);
+        let actor = if let Some(actor) = query_params.actor
+            && actor != Actor::All.to_string()
+        {
+            Some(actor)
+        } else {
+            None
+        };
         let (nodes, total) = storage_process
             .node_list(
-                query_params.actor,
+                actor,
                 goat_addr,
                 query_params.offset,
                 query_params.limit,
