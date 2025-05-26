@@ -450,7 +450,8 @@ impl<'a> StorageProcessor<'a> {
 
         if params.is_bridge_out && params.status.is_none() {
             conditions.push(
-                "graph.status NOT IN (\'OperatorPresigned\',\'CommitteePresigned\')".to_string(),
+                "( graph.status NOT IN (\'OperatorPresigned\',\'CommitteePresigned\', \'OperatorDataPushed\') OR \
+                 (graph.status == \'OperatorDataPushed\'  AND graph.init_withdraw_txid NOT NULL ) )".to_string(),
             );
         }
 
