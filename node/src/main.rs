@@ -29,15 +29,12 @@ use bitvm2_noded::rpc_service;
 use bitvm2_noded::utils::{self, detect_heart_beat, save_local_info};
 
 use anyhow::Result;
+use bitvm2_noded::relayer_action::monitor_events;
 use tokio::time::interval;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 struct Opts {
-    /// Run in daemon mode
-    #[arg(short)]
-    daemon: bool,
-
     /// Setup the bootnode p2p port
     #[arg(long, default_value = "0")]
     p2p_port: u16,
@@ -54,11 +51,6 @@ struct Opts {
     #[arg(long)]
     bootnodes: Vec<String>,
 
-    // #[arg(long)]
-    // local_peer_id: Option<String>,
-
-    // #[arg(long)]
-    // local_key: Option<String>,
     /// Metric endpoint path.
     #[arg(long, default_value = "/metrics")]
     metrics_path: String,
@@ -67,9 +59,6 @@ struct Opts {
     #[arg(long, default_value = "true")]
     enable_kademlia: bool,
 
-    // /// Whether to run the libp2p Autonat protocol.
-    // #[arg(long)]
-    // enable_autonat: bool,
     #[command(subcommand)]
     cmd: Option<Commands>,
 }
@@ -183,20 +172,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .collect::<HashMap<String, _>>();
 
-    match &opt.cmd {
-        Some(Commands::Peer(key_arg)) => match &key_arg.peer_cmd {
+    if let Some(Commands::Peer(key_arg)) = &opt.cmd {
+        match &key_arg.peer_cmd {
             PeerCommands::GetPeers { peer_id } => {
                 let peer_id = peer_id.unwrap_or(PeerId::random());
                 tracing::debug!("Searching for the closest peers to {peer_id}");
                 swarm.behaviour_mut().kademlia.get_closest_peers(peer_id);
                 //return Ok(());
             }
-        },
-        _ => {
-            //if !opt.daemon {
-            //    tracing::debug!("Help");
-            //    return Ok(());
-            //}
         }
     }
 
@@ -251,6 +234,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     ));
     // Read full lines from stdin
     let mut heart_beat_interval = interval(Duration::from_secs(300));
+    let mut l2_watch_interval = interval(Duration::from_secs(5));
     let mut interval = interval(Duration::from_secs(20));
     let mut stdin = io::BufReader::new(io::stdin()).lines();
     loop {
@@ -292,6 +276,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         Err(e) => { tracing::error!(e) }
                     }
                 },
+
+               _ticker = l2_watch_interval.tick() => {
+                    match monitor_events(&goat_client,&local_db).await{
+                        Ok(_) => {}
+                        Err(e) => { tracing::error!(e) }
+                    }
+                },
+
                 _ticker = heart_beat_interval.tick() =>{
                     match detect_heart_beat(&mut swarm).await{
                         Ok(_) => {}
