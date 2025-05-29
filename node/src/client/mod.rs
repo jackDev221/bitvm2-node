@@ -28,6 +28,7 @@ pub async fn create_local_db(db_path: &str) -> LocalDB {
 }
 
 /// Esplora client and interfaces
+#[derive(Clone)]
 pub struct BTCClient {
     /// FIXME: make it private
     pub esplora: AsyncClient,

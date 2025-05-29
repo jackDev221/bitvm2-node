@@ -31,13 +31,16 @@ use bitcoin::Txid;
 use bitcoin::consensus::encode::{deserialize_hex, serialize_hex};
 use bitcoin::hashes::Hash;
 use bitvm2_lib::actors::Actor;
+use futures;
 use goat::transactions::assert::utils::COMMIT_TX_NUM;
 use goat::{
     constants::{CONNECTOR_3_TIMELOCK, CONNECTOR_4_TIMELOCK},
     utils::num_blocks_per_network,
 };
 use libp2p::Swarm;
+use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
 use store::{
@@ -372,7 +375,7 @@ pub async fn monitor_events(
 }
 
 pub async fn scan_bridge_in_prepare(
-    swarm: &mut Swarm<AllBehaviours>,
+    swarm: Arc<Mutex<&mut Swarm<AllBehaviours>>>,
     local_db: &LocalDB,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("start tick scan_bridge_in_prepare");
@@ -399,7 +402,10 @@ pub async fn scan_bridge_in_prepare(
             pegin_amount: p2p_data.pegin_amount,
             user_inputs: p2p_data.user_inputs,
         });
-        send_to_peer(swarm, GOATMessage::from_typed(Actor::Committee, &message_content)?)?;
+        send_to_peer(
+            &mut *swarm.lock().unwrap(),
+            GOATMessage::from_typed(Actor::Committee, &message_content)?,
+        )?;
         ids.push(message.id)
     }
     info!("send msg:{:?} for create instances", ids);
@@ -420,7 +426,7 @@ pub async fn scan_bridge_in_prepare(
 }
 
 pub async fn scan_l1_broadcast_txs(
-    _swarm: &mut Swarm<AllBehaviours>,
+    _swarm: Arc<Mutex<&mut Swarm<AllBehaviours>>>,
     local_db: &LocalDB,
     btc_client: &BTCClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -470,7 +476,7 @@ pub async fn scan_l1_broadcast_txs(
 }
 
 pub async fn scan_post_pegin_data(
-    _swarm: &mut Swarm<AllBehaviours>,
+    _swarm: Arc<Mutex<&mut Swarm<AllBehaviours>>>,
     local_db: &LocalDB,
     btc_client: &BTCClient,
     goat_client: &GOATClient,
@@ -543,7 +549,7 @@ pub async fn scan_post_pegin_data(
 }
 
 pub async fn scan_post_operator_data(
-    _swarm: &mut Swarm<AllBehaviours>,
+    _swarm: Arc<Mutex<&mut Swarm<AllBehaviours>>>,
     local_db: &LocalDB,
     goat_client: &GOATClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -611,7 +617,7 @@ pub async fn scan_post_operator_data(
 
 // tick_task1
 pub async fn scan_withdraw(
-    swarm: &mut Swarm<AllBehaviours>,
+    swarm: Arc<Mutex<&mut Swarm<AllBehaviours>>>,
     local_db: &LocalDB,
     goat_client: &GOATClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -628,7 +634,10 @@ pub async fn scan_withdraw(
         )
         .await?;
         if msg_times < MESSAGE_BROADCAST_MAX_TIMES {
-            send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
+            send_to_peer(
+                &mut *swarm.lock().unwrap(),
+                GOATMessage::from_typed(Actor::Operator, &message_content)?,
+            )?;
             update_message_broadcast_times(
                 local_db,
                 &instance_id,
@@ -644,7 +653,7 @@ pub async fn scan_withdraw(
 
 // Tick-Task-2:
 pub async fn scan_kickoff(
-    swarm: &mut Swarm<AllBehaviours>,
+    swarm: Arc<Mutex<&mut Swarm<AllBehaviours>>>,
     local_db: &LocalDB,
     btc_client: &BTCClient,
     goat_client: &GOATClient,
@@ -708,7 +717,10 @@ pub async fn scan_kickoff(
                 kickoff_txid,
             });
             if graph_data.msg_times < MESSAGE_BROADCAST_MAX_TIMES {
-                send_to_peer(swarm, GOATMessage::from_typed(Actor::All, &message_content)?)?;
+                send_to_peer(
+                    &mut *swarm.lock().unwrap(),
+                    GOATMessage::from_typed(Actor::All, &message_content)?,
+                )?;
                 update_message_broadcast_times(
                     local_db,
                     &graph_data.instance_id,
@@ -725,7 +737,7 @@ pub async fn scan_kickoff(
 
 //Tick-Task-3:
 pub async fn scan_assert(
-    swarm: &mut Swarm<AllBehaviours>,
+    swarm: Arc<Mutex<&mut Swarm<AllBehaviours>>>,
     local_db: &LocalDB,
     btc_client: &BTCClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -776,7 +788,10 @@ pub async fn scan_assert(
                 assert_commit_txids: graph_data.assert_commit_txids.unwrap(),
                 assert_final_txid: graph_data.assert_final_txid.unwrap(),
             });
-            send_to_peer(swarm, GOATMessage::from_typed(Actor::All, &message_content)?)?;
+            send_to_peer(
+                &mut *swarm.lock().unwrap(),
+                GOATMessage::from_typed(Actor::All, &message_content)?,
+            )?;
             update_message_broadcast_times(
                 local_db,
                 &graph_data.instance_id,
@@ -805,7 +820,7 @@ pub async fn scan_assert(
 
 //Tick-Task-4
 pub async fn scan_take1(
-    swarm: &mut Swarm<AllBehaviours>,
+    swarm: Arc<Mutex<&mut Swarm<AllBehaviours>>>,
     local_db: &LocalDB,
     btc_client: &BTCClient,
     goat_client: &GOATClient,
@@ -820,6 +835,7 @@ pub async fn scan_take1(
     let current_height = btc_client.esplora.get_height().await?;
     let lock_blocks = num_blocks_per_network(get_network(), CONNECTOR_3_TIMELOCK);
     info!("scan_take1 get graph datas size: {}", graph_datas.len());
+
     for graph_data in graph_datas {
         let instance_id = graph_data.instance_id;
         let graph_id = graph_data.graph_id;
@@ -833,7 +849,8 @@ pub async fn scan_take1(
         }
         let take1_txid = graph_data.take1_txid.unwrap();
         let kickoff_txid = graph_data.kickoff_txid.unwrap();
-        if let Some(spent_txid) = outpoint_spent_txid(btc_client, &kickoff_txid, 1).await? {
+        let spent_txid = outpoint_spent_txid(btc_client, &kickoff_txid, 1).await?;
+        if let Some(spent_txid) = spent_txid {
             if spent_txid == take1_txid {
                 // take1 sent, try to call finish_withdraw_happy_path
                 info!("graph_id:{},  take-1 sent, txid: {spent_txid}", graph_data.graph_id);
@@ -873,7 +890,10 @@ pub async fn scan_take1(
                     graph_id,
                     challenge_txid: spent_txid,
                 });
-                send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
+                send_to_peer(
+                    &mut *swarm.lock().unwrap(),
+                    GOATMessage::from_typed(Actor::Operator, &message_content)?,
+                )?;
                 // modify graph status and will no longer perform scan-take1 on this graph
                 update_graph_fields(
                     local_db,
@@ -901,7 +921,7 @@ pub async fn scan_take1(
                     let message_content =
                         GOATMessageContent::Take1Ready(Take1Ready { instance_id, graph_id });
                     send_to_peer(
-                        swarm,
+                        &mut *swarm.lock().unwrap(),
                         GOATMessage::from_typed(Actor::Operator, &message_content)?,
                     )?;
                     update_message_broadcast_times(
@@ -930,7 +950,7 @@ pub async fn scan_take1(
 
 //Tick-Task-5:
 pub async fn scan_take2(
-    swarm: &mut Swarm<AllBehaviours>,
+    swarm: Arc<Mutex<&mut Swarm<AllBehaviours>>>,
     local_db: &LocalDB,
     btc_client: &BTCClient,
     goat_client: &GOATClient,
@@ -944,8 +964,8 @@ pub async fn scan_take2(
     .await?;
     let current_height = btc_client.esplora.get_height().await?;
     let lock_blocks = num_blocks_per_network(get_network(), CONNECTOR_4_TIMELOCK);
-
     info!("scan_take2 get graph datas size: {}", graph_datas.len());
+
     for graph_data in graph_datas {
         let instance_id = graph_data.instance_id;
         let graph_id = graph_data.graph_id;
@@ -959,7 +979,8 @@ pub async fn scan_take2(
         }
         let take2_txid = graph_data.take2_txid.unwrap();
         let assert_final_txid = graph_data.assert_final_txid.unwrap();
-        if let Some(spent_txid) = outpoint_spent_txid(btc_client, &assert_final_txid, 1).await? {
+        let spent_txid = outpoint_spent_txid(btc_client, &assert_final_txid, 1).await?;
+        if let Some(spent_txid) = spent_txid {
             if spent_txid == take2_txid {
                 // take2 sent, try to call finish_withdraw_unhappy_path
                 info!("graph_id:{},  take-2 sent, txid: {spent_txid}", graph_data.graph_id);
@@ -1007,20 +1028,18 @@ pub async fn scan_take2(
                     None,
                 )
                 .await?;
-                finish_withdraw_disproved(
-                    btc_client,
-                    goat_client,
-                    &graph_id,
-                    &btc_client.fetch_btc_tx(&disprove_txid).await?,
-                )
-                .await?;
+                let disprove_tx = btc_client.fetch_btc_tx(&disprove_txid).await?;
+                finish_withdraw_disproved(btc_client, goat_client, &graph_id, &disprove_tx).await?;
                 // in case challenger never broadcast DisproveSent
                 let message_content = GOATMessageContent::DisproveSent(DisproveSent {
                     instance_id,
                     graph_id,
                     disprove_txid: spent_txid,
                 });
-                send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
+                send_to_peer(
+                    &mut *swarm.lock().unwrap(),
+                    GOATMessage::from_typed(Actor::Operator, &message_content)?,
+                )?;
                 update_graph_fields(
                     local_db,
                     graph_id,
@@ -1035,6 +1054,7 @@ pub async fn scan_take2(
             // if take-2/disprove already sent, no need for Take2Ready
             continue;
         }
+
         if graph_data.msg_times < MESSAGE_BROADCAST_MAX_TIMES {
             // check if assert_final's timelock for take2 is expired
             if let Some(asset_final_height) =
@@ -1047,7 +1067,7 @@ pub async fn scan_take2(
                     let message_content =
                         GOATMessageContent::Take2Ready(Take2Ready { instance_id, graph_id });
                     send_to_peer(
-                        swarm,
+                        &mut *swarm.lock().unwrap(),
                         GOATMessage::from_typed(Actor::Operator, &message_content)?,
                     )?;
                     update_message_broadcast_times(
@@ -1080,42 +1100,62 @@ pub async fn do_tick_action(
     btc_client: &BTCClient,
     goat_client: &GOATClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // if let Err(err) = monitor_events(goat_client, local_db).await {
-    //     warn!("monitor_events, err {:?}", err)
-    // }
-    if let Err(err) = scan_bridge_in_prepare(swarm, local_db).await {
-        warn!("scan_bridge_in_prepare, err {:?}", err)
+    let swarm = Arc::new(Mutex::new(swarm));
+    let task_futures: Vec<(
+        &str,
+        Pin<Box<dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>,
+    )> = vec![
+        // ("monitor_events", Box::pin(monitor_events(goat_client.clone(), local_db.clone()))),
+        ("scan_bridge_in_prepare", Box::pin(scan_bridge_in_prepare(swarm.clone(), local_db))),
+        (
+            "scan_l1_broadcast_txs",
+            Box::pin(scan_l1_broadcast_txs(swarm.clone(), local_db, btc_client)),
+        ),
+        (
+            "scan_post_pegin_data",
+            Box::pin(scan_post_pegin_data(
+                swarm.clone(),
+                local_db,
+                btc_client,
+                goat_client,
+            )),
+        ),
+        (
+            "scan_post_operator_data",
+            Box::pin(scan_post_operator_data(swarm.clone(), local_db, goat_client)),
+        ),
+        ("scan_withdraw", Box::pin(scan_withdraw(swarm.clone(), local_db, goat_client))),
+        (
+            "scan_kickoff",
+            Box::pin(scan_kickoff(
+                swarm.clone(),
+                local_db,
+                btc_client,
+                goat_client,
+            )),
+        ),
+        ("scan_assert", Box::pin(scan_assert(swarm.clone(), local_db, btc_client))),
+        (
+            "scan_take1",
+            Box::pin(scan_take1(swarm.clone(), local_db, btc_client, goat_client)),
+        ),
+        (
+            "scan_take2",
+            Box::pin(scan_take2(swarm.clone(), local_db, btc_client, goat_client)),
+        ),
+    ];
+
+    let results = futures::future::join_all(
+        task_futures.into_iter().map(|(name, future)| async move { (name, future.await) }),
+    )
+    .await;
+
+    for (name, result) in results {
+        match result {
+            Ok(_) => info!("Task '{}' completed successfully", name),
+            Err(e) => warn!("Task '{}' failed with error: {:?}", name, e),
+        }
     }
 
-    if let Err(err) = scan_l1_broadcast_txs(swarm, local_db, btc_client).await {
-        warn!("scan_l1_broadcast_txs, err {:?}", err)
-    }
-    if let Err(err) = scan_post_pegin_data(swarm, local_db, btc_client, goat_client).await {
-        warn!("scan_post_pegin_data, err {:?}", err)
-    }
-
-    if let Err(err) = scan_post_operator_data(swarm, local_db, goat_client).await {
-        warn!("scan_post_operator_data, err {:?}", err)
-    }
-
-    if let Err(err) = scan_withdraw(swarm, local_db, goat_client).await {
-        warn!("scan_withdraw, err {:?}", err)
-    }
-
-    if let Err(err) = scan_kickoff(swarm, local_db, btc_client, goat_client).await {
-        warn!("scan_kickoff, err {:?}", err)
-    }
-
-    if let Err(err) = scan_assert(swarm, local_db, btc_client).await {
-        warn!("scan_assert, err {:?}", err)
-    }
-
-    if let Err(err) = scan_take1(swarm, local_db, btc_client, goat_client).await {
-        warn!("scan_take1, err {:?}", err)
-    }
-
-    if let Err(err) = scan_take2(swarm, local_db, btc_client, goat_client).await {
-        warn!("scan_take2, err {:?}", err)
-    }
     Ok(())
 }
