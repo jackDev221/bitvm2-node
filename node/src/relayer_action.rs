@@ -692,6 +692,16 @@ pub async fn scan_kickoff(
             }
         }
         if send_message {
+            update_graph_fields(
+                local_db,
+                graph_data.graph_id,
+                Some(GraphStatus::KickOff.to_string()),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await?;
             let message_content = GOATMessageContent::KickoffSent(KickoffSent {
                 instance_id,
                 graph_id,
