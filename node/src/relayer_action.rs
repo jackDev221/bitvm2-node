@@ -3,8 +3,8 @@
 use crate::action::{ChallengeSent, CreateInstance, DisproveSent};
 use crate::client::chain::chain_adaptor::WithdrawStatus;
 use crate::client::graph_query::{
-    BlockRange, CANCEL_WITHDRAW_EVENT_ENTITY, CancelWithdrawEvent, INIT_WITHDRAW_EVENT_ENTITY,
-    InitWithdrawEvent, UserGraphWithdrawEvent, get_user_withdraw_events_query,
+    BlockRange, CancelWithdrawEvent, GatewayEventEntity, InitWithdrawEvent, ProceedWithdrawEvent,
+    UserGraphWithdrawEvent, get_gateway_events_query,
 };
 use crate::client::{BTCClient, GOATClient, GraphQueryClient};
 use crate::env::{
@@ -37,6 +37,7 @@ use goat::{
     utils::num_blocks_per_network,
 };
 use libp2p::Swarm;
+use std::error::Error;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
@@ -151,34 +152,55 @@ pub async fn get_initialized_graphs(
 pub async fn fetch_and_handle_block_range_events<'a>(
     client: &GraphQueryClient,
     storage_processor: &mut StorageProcessor<'a>,
+    event_entities: &[GatewayEventEntity],
     from_height: i64,
     to_height: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let query_res = client
-        .execute_query(&get_user_withdraw_events_query(Some(BlockRange::new(
-            from_height,
-            to_height,
-        ))))
+        .execute_query(&get_gateway_events_query(
+            event_entities,
+            Some(BlockRange::new(from_height, to_height)),
+        ))
         .await?;
 
-    let init_withdraw_events: Vec<InitWithdrawEvent> =
-        if let Some(init_withdraw_value) = query_res[INIT_WITHDRAW_EVENT_ENTITY].as_array() {
-            serde_json::from_value(serde_json::Value::Array(init_withdraw_value.clone()))?
-        } else {
-            vec![]
-        };
-
-    let cancel_withdraw_events: Vec<CancelWithdrawEvent> =
-        if let Some(cancel_withdraw_value) = query_res[CANCEL_WITHDRAW_EVENT_ENTITY].as_array() {
-            serde_json::from_value(serde_json::Value::Array(cancel_withdraw_value.clone()))?
-        } else {
-            vec![]
-        };
+    let mut init_withdraw_events: Vec<InitWithdrawEvent> = vec![];
+    let mut cancel_withdraw_events = vec![];
+    let mut proceed_withdraw_events: Vec<ProceedWithdrawEvent> = vec![];
+    for event_entity in event_entities {
+        let entity = event_entity.clone();
+        if let Some(value_vec) = query_res[entity.to_string()].as_array() {
+            match entity {
+                GatewayEventEntity::InitWithdraws => {
+                    init_withdraw_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
+                GatewayEventEntity::CancelWithdraws => {
+                    cancel_withdraw_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
+                GatewayEventEntity::ProceedWithdraws => {
+                    proceed_withdraw_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
+            };
+        }
+    }
     info!(
         "get user init withdraw events: {}, cancel withdraw events: {}, block range {from_height}:{to_height}",
         init_withdraw_events.len(),
         cancel_withdraw_events.len()
     );
+    handle_user_withdraw_events(storage_processor, init_withdraw_events, cancel_withdraw_events)
+        .await?;
+    handle_proceed_withdraw_events(storage_processor, proceed_withdraw_events).await?;
+    Ok(())
+}
+
+async fn handle_user_withdraw_events<'a>(
+    storage_processor: &mut StorageProcessor<'a>,
+    init_withdraw_events: Vec<InitWithdrawEvent>,
+    cancel_withdraw_events: Vec<CancelWithdrawEvent>,
+) -> Result<(), Box<dyn Error>> {
     let mut user_withdraw_events: Vec<UserGraphWithdrawEvent> =
         init_withdraw_events.into_iter().map(UserGraphWithdrawEvent::InitWithdraw).collect();
     let mut user_cancel_withdraw_events: Vec<UserGraphWithdrawEvent> =
@@ -220,10 +242,18 @@ pub async fn fetch_and_handle_block_range_events<'a>(
     Ok(())
 }
 
+async fn handle_proceed_withdraw_events<'a>(
+    _storage_processor: &mut StorageProcessor<'a>,
+    _proceed_withdraw_events: Vec<ProceedWithdrawEvent>,
+) -> Result<(), Box<dyn Error>> {
+    Ok(())
+}
+
 pub async fn fetch_history_events(
     local_db: &LocalDB,
     query_client: &GraphQueryClient,
     watch_contract: WatchContract,
+    event_entities: Vec<GatewayEventEntity>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("Start into fetch_history_events from:{}", watch_contract.from_height);
     let goat_client = GOATClient::new(env::goat_config_from_env().await, env::get_goat_network());
@@ -254,6 +284,7 @@ pub async fn fetch_history_events(
             fetch_and_handle_block_range_events(
                 query_client,
                 &mut tx,
+                &event_entities,
                 watch_contract.from_height,
                 to_height,
             )
@@ -302,6 +333,7 @@ pub async fn fetch_history_events(
 pub async fn monitor_events(
     goat_client: &GOATClient,
     local_db: &LocalDB,
+    event_entities: Vec<GatewayEventEntity>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("start tick monitor_events");
     let addr = env::get_goat_gateway_contract_from_env().to_string();
@@ -342,10 +374,15 @@ pub async fn monitor_events(
         let watch_contract_clone = watch_contract.clone();
         let local_db_clone = local_db.clone();
         let query_client_clone = query_client.clone();
+        let event_entities_clone = event_entities.clone();
         tokio::spawn(async move {
-            let _ =
-                fetch_history_events(&local_db_clone, &query_client_clone, watch_contract_clone)
-                    .await;
+            let _ = fetch_history_events(
+                &local_db_clone,
+                &query_client_clone,
+                watch_contract_clone,
+                event_entities_clone,
+            )
+            .await;
         });
         return Ok(());
     }
@@ -359,6 +396,7 @@ pub async fn monitor_events(
     fetch_and_handle_block_range_events(
         &query_client,
         &mut tx,
+        &event_entities,
         watch_contract.from_height,
         to_height,
     )
