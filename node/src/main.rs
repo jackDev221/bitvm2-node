@@ -29,6 +29,7 @@ use bitvm2_noded::rpc_service;
 use bitvm2_noded::utils::{self, detect_heart_beat, save_local_info};
 
 use anyhow::Result;
+use bitvm2_noded::client::graph_query::GatewayEventEntity;
 use bitvm2_noded::relayer_action::monitor_events;
 use tokio::time::interval;
 
@@ -279,7 +280,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                _ticker = l2_watch_interval.tick() => {
                     if actor == Actor::Relayer {
-                        match monitor_events(&goat_client,&local_db).await{
+                        match monitor_events(&goat_client,&local_db, vec![GatewayEventEntity::InitWithdraws, GatewayEventEntity::CancelWithdraws]).await{
+                            Ok(_) => {}
+                            Err(e) => { tracing::error!(e) }
+                        }
+                    }
+                    if actor == Actor::Operator {
+                        match monitor_events(&goat_client,&local_db, vec![GatewayEventEntity::ProceedWithdraws]).await{
                             Ok(_) => {}
                             Err(e) => { tracing::error!(e) }
                         }
