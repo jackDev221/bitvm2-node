@@ -50,7 +50,7 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
-use store::{BridgeInStatus, Graph, GraphStatus, Node};
+use store::{BridgeInStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus, Node};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -699,7 +699,18 @@ pub async fn get_groth16_proof(
     let (proof, pis) = {
         // query proof from database.
         let mut db_lock = local_db.acquire().await?;
+
+        let _goat_tx_record = db_lock
+            .get_graph_goat_tx_record(
+                graph_id,
+                instance_id,
+                &GoatTxType::ProceedWithdraw.to_string(),
+            )
+            .await?;
+        // TODO use _goat_tx_record.height to get height get proof and pis
+
         let (proof, pis) = db_lock.get_proof_with_pis(instance_id, graph_id).await?;
+
         let proof_bytes = hex::decode(proof)?;
         let pis_bytes = hex::decode(pis)?;
         (proof_bytes, pis_bytes)
@@ -908,6 +919,34 @@ pub async fn update_graph_fields(
             init_withdraw_txid: None,
         })
         .await?)
+}
+
+pub async fn create_goat_tx_record(
+    local_db: &LocalDB,
+    goat_client: &GOATClient,
+    graph_id: Uuid,
+    instance_id: Uuid,
+    tx_hash: &str,
+    tx_type: GoatTxType,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(receipt) = goat_client.get_tx_receipt(tx_hash).await?
+        && receipt.block_number.is_some()
+    {
+        let mut storage_process = local_db.acquire().await?;
+        storage_process
+            .create_or_update_goat_tx_record(&GoatTxRecord {
+                instance_id,
+                graph_id,
+                tx_type: tx_type.to_string(),
+                tx_hash: tx_hash.to_string(),
+                height: receipt.block_number.unwrap() as i64,
+                is_local: true,
+                extra: None,
+                created_at: current_time_secs(),
+            })
+            .await?;
+    }
+    Ok(())
 }
 pub async fn store_graph(
     local_db: &LocalDB,

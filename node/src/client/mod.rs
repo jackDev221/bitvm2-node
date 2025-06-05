@@ -5,6 +5,7 @@ use crate::client::chain::chain_adaptor::{
 use crate::client::chain::evmchain::EvmChain;
 use crate::client::chain::goat_adaptor::GoatInitConfig;
 use crate::client::esplora::get_esplora_url;
+use alloy::rpc::types::TransactionReceipt;
 use anyhow::bail;
 use bitcoin::consensus::encode::{deserialize_hex, serialize};
 use bitcoin::hashes::Hash;
@@ -461,6 +462,13 @@ impl GOATClient {
         }
 
         Ok((root, proof.to_vec(), leaf, height, index, raw_header.to_vec()))
+    }
+
+    pub async fn get_tx_receipt(
+        &self,
+        tx_hash: &str,
+    ) -> anyhow::Result<Option<TransactionReceipt>> {
+        self.chain_service.adaptor.get_tx_receipt(tx_hash).await
     }
 }
 

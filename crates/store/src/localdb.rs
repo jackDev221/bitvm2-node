@@ -1,9 +1,9 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GrapFullData, Graph, GraphTickActionMetaData, Instance, Message,
-    MessageBroadcast, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofWithPis,
-    PubKeyCollect, PubKeyCollectMetaData, WatchContract,
+    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, GrapFullData, Graph, GraphTickActionMetaData, Instance,
+    Message, MessageBroadcast, Node, NodesOverview, NonceCollect, NonceCollectMetaData,
+    ProofWithPis, PubKeyCollect, PubKeyCollectMetaData, WatchContract,
 };
 
 use sqlx::migrate::Migrator;
@@ -333,8 +333,8 @@ impl<'a> StorageProcessor<'a> {
             current_time,
             instance_id
         )
-        .execute(self.conn())
-        .await?;
+            .execute(self.conn())
+            .await?;
         Ok(())
     }
 
@@ -938,7 +938,7 @@ impl<'a> StorageProcessor<'a> {
         msg_times: i64,
     ) -> anyhow::Result<()> {
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-        let message_broadcast_info =sqlx::query_as!(
+        let message_broadcast_info = sqlx::query_as!(
             MessageBroadcast,
             "SELECT instance_id as \"instance_id:Uuid\", graph_id as \"graph_id:Uuid\", msg_type, msg_times, \
             created_at, updated_at FROM message_broadcast WHERE instance_id =? AND graph_id = ? ",
@@ -962,8 +962,8 @@ impl<'a> StorageProcessor<'a> {
             current_time
 
         )
-        .execute(self.conn())
-        .await?;
+            .execute(self.conn())
+            .await?;
         Ok(())
     }
 
@@ -978,8 +978,8 @@ impl<'a> StorageProcessor<'a> {
             instance_id,
             graph_id
         )
-        .fetch_optional(self.conn())
-        .await?;
+            .fetch_optional(self.conn())
+            .await?;
         // FIXME: we use a default proof here, will remove later
         match proof_with_pis {
             Some(proof) => Ok((proof.proof, proof.pis)),
@@ -1418,8 +1418,8 @@ impl<'a> StorageProcessor<'a> {
             "SELECT addr, the_graph_url, from_height, gap, status, extra,updated_at FROM watch_contract WHERE addr = ? ",
             addr
         )
-        .fetch_optional(self.conn())
-        .await?)
+            .fetch_optional(self.conn())
+            .await?)
     }
 
     pub async fn create_or_update_watch_contract(
@@ -1455,6 +1455,43 @@ impl<'a> StorageProcessor<'a> {
         .execute(self.conn())
         .await;
         Ok(())
+    }
+
+    pub async fn create_or_update_goat_tx_record(
+        &mut self,
+        goat_tx_record: &GoatTxRecord,
+    ) -> anyhow::Result<()> {
+        let _ = sqlx::query!(
+            "INSERT OR REPLACE INTO goat_tx_record (instance_id, graph_id, tx_type, tx_hash, height, is_local, extra, created_at)  \
+       VALUES  (?, ?, ?, ?, ?, ?, ?, ?)",
+            goat_tx_record.instance_id,
+            goat_tx_record.graph_id,
+            goat_tx_record.tx_type,
+            goat_tx_record.tx_hash,
+            goat_tx_record.height,
+            goat_tx_record.is_local,
+            goat_tx_record.extra,
+            goat_tx_record.created_at
+        ).execute(self.conn()).await;
+        Ok(())
+    }
+
+    pub async fn get_graph_goat_tx_record(
+        &mut self,
+        graph_id: &Uuid,
+        instance_id: &Uuid,
+        tx_type: &str,
+    ) -> anyhow::Result<Option<GoatTxRecord>> {
+        Ok(
+            sqlx::query_as!(
+                GoatTxRecord,
+                "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, tx_hash, height, is_local,  extra, created_at From goat_tx_record where instance_id = ? AND graph_id = ? AND tx_type = ?",
+                instance_id,
+                graph_id,
+                tx_type
+            ).fetch_optional(self.conn())
+            .await?
+        )
     }
 }
 
