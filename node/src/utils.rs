@@ -50,7 +50,7 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
-use store::{BridgeInStatus, Graph, GraphStatus, Node};
+use store::{BridgeInStatus, GoatTxType, Graph, GraphStatus, Node};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -699,7 +699,15 @@ pub async fn get_groth16_proof(
     let (proof, pis) = {
         // query proof from database.
         let mut db_lock = local_db.acquire().await?;
+
+
+        let _goat_tx_record = db_lock.get_graph_goat_tx_record(graph_id, instance_id, &GoatTxType::ProceedWithdraw.to_string()).await?;
+        // TODO use _goat_tx_record.height to get height get proof and pis
+
         let (proof, pis) = db_lock.get_proof_with_pis(instance_id, graph_id).await?;
+
+
+
         let proof_bytes = hex::decode(proof)?;
         let pis_bytes = hex::decode(pis)?;
         (proof_bytes, pis_bytes)

@@ -206,13 +206,13 @@ impl QueryBuilder {
             if !q.filters.is_empty() {
                 query.push_str("where: {");
                 for (field, value) in q.filters {
-                    query.push_str(&format!("{field}: \"{value}\","));
+                    query.push_str(&format!("{field}: \"{value}\", "));
                 }
-                query.push_str("},");
+                query.push_str("}, ");
             }
             // Add order by if specified
             if let (Some(order_by), Some(direction)) = (q.order_by, q.order_direction) {
-                query.push_str(&format!("orderBy: {order_by}, orderDirection: {direction},"));
+                query.push_str(&format!("orderBy: {order_by}, orderDirection: {direction}, "));
             }
             // Add pagination if specified
             if let Some(first) = q.first {
@@ -242,44 +242,4 @@ pub fn get_gateway_events_query(
         query_builder = entity.add_single_query(query_builder, block_range.clone());
     }
     query_builder.build()
-
-    // let mut query_builder = QueryBuilder::new()
-    //     .add_query(INIT_WITHDRAW_EVENT_ENTITY)
-    //     .add_query(CANCEL_WITHDRAW_EVENT_ENTITY);
-    // query_builder = query_builder
-    //     .add_field(INIT_WITHDRAW_EVENT_ENTITY, "id")
-    //     .add_field(INIT_WITHDRAW_EVENT_ENTITY, "instanceId")
-    //     .add_field(INIT_WITHDRAW_EVENT_ENTITY, "graphId")
-    //     .add_field(INIT_WITHDRAW_EVENT_ENTITY, "transactionHash")
-    //     .add_field(INIT_WITHDRAW_EVENT_ENTITY, "blockNumber")
-    //     .set_order_by(INIT_WITHDRAW_EVENT_ENTITY, "blockNumber", "asc");
-    //
-    // query_builder = query_builder
-    //     .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "id")
-    //     .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "instanceId")
-    //     .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "graphId")
-    //     .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "transactionHash")
-    //     .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "blockNumber")
-    //     .set_order_by(CANCEL_WITHDRAW_EVENT_ENTITY, "blockNumber", "asc");
-    //
-    // if let Some(range) = block_range {
-    //     query_builder = query_builder
-    //         .add_filter(
-    //             INIT_WITHDRAW_EVENT_ENTITY,
-    //             "blockNumber_gte",
-    //             &range.start_block.to_string(),
-    //         )
-    //         .add_filter(INIT_WITHDRAW_EVENT_ENTITY, "blockNumber_lte", &range.end_block.to_string())
-    //         .add_filter(
-    //             CANCEL_WITHDRAW_EVENT_ENTITY,
-    //             "blockNumber_gte",
-    //             &range.start_block.to_string(),
-    //         )
-    //         .add_filter(
-    //             CANCEL_WITHDRAW_EVENT_ENTITY,
-    //             "blockNumber_lte",
-    //             &range.end_block.to_string(),
-    //         );
-    // }
-    // query_builder.build()
 }

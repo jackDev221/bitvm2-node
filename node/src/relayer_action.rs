@@ -42,8 +42,8 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
 use store::{
-    BridgeInStatus, BridgePath, GraphStatus, GraphTickActionMetaData, MessageState, MessageType,
-    WatchContract, WatchContractStatus,
+    BridgeInStatus, BridgePath, GoatTxRecord, GoatTxType, GraphStatus, GraphTickActionMetaData,
+    MessageState, MessageType, WatchContract, WatchContractStatus,
 };
 use tokio::time::sleep;
 use tracing::{info, warn};
@@ -223,8 +223,8 @@ async fn handle_user_withdraw_events<'a>(
                     })
                     .await?;
             }
-            UserGraphWithdrawEvent::CancelWithdraw(init_event) => {
-                let graph_id = Uuid::from_str(&init_event.graph_id)?;
+            UserGraphWithdrawEvent::CancelWithdraw(cancel_event) => {
+                let graph_id = Uuid::from_str(&strip_hex_prefix_owned(&cancel_event.graph_id))?;
                 storage_processor
                     .update_graph_fields(UpdateGraphParams {
                         graph_id,
@@ -243,9 +243,23 @@ async fn handle_user_withdraw_events<'a>(
 }
 
 async fn handle_proceed_withdraw_events<'a>(
-    _storage_processor: &mut StorageProcessor<'a>,
-    _proceed_withdraw_events: Vec<ProceedWithdrawEvent>,
+    storage_processor: &mut StorageProcessor<'a>,
+    proceed_withdraw_events: Vec<ProceedWithdrawEvent>,
 ) -> Result<(), Box<dyn Error>> {
+    for event in proceed_withdraw_events {
+        storage_processor
+            .create_or_update_goat_tx_record(&GoatTxRecord {
+                instance_id: Uuid::from_str(&strip_hex_prefix_owned(&event.instance_id))?,
+                graph_id: Uuid::from_str(&strip_hex_prefix_owned(&event.graph_id))?,
+                tx_type: GoatTxType::ProceedWithdraw.to_string(),
+                tx_hash: event.transaction_hash,
+                height: event.block_number.parse::<i64>()?,
+                is_local: false,
+                extra: Some(event.kickoff_txid),
+                created_at: current_time_secs(),
+            })
+            .await?
+    }
     Ok(())
 }
 
