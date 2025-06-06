@@ -3,9 +3,12 @@ use crate::client::chain::chain_adaptor::WithdrawStatus;
 use crate::client::chain::utils::{
     get_graph_ids_by_instance_id, validate_committee, validate_operator, validate_relayer,
 };
+use crate::client::graph_query::GatewayEventEntity;
 use crate::client::{BTCClient, GOATClient};
+use crate::env;
 use crate::env::*;
 use crate::middleware::AllBehaviours;
+use crate::relayer_action::monitor_events;
 use crate::rpc_service::current_time_secs;
 use alloy::providers::ProviderBuilder;
 use ark_serialize::CanonicalDeserialize;
@@ -27,6 +30,9 @@ use bitvm2_lib::types::{
 };
 use bitvm2_lib::verifier::{extract_proof_sigs_from_assert_commit_txns, verify_proof};
 use esplora_client::Utxo;
+use futures::SinkExt;
+use futures::channel::mpsc;
+use futures::executor::block_on;
 use goat::commitments::CommitmentMessageId;
 use goat::connectors::base::TaprootConnector;
 use goat::connectors::connector_6::Connector6;
@@ -47,7 +53,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
 use store::{BridgeInStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus, Node};
@@ -1402,4 +1408,62 @@ pub async fn obsolete_sibling_graphs(
         }
     }
     Ok(())
+}
+
+pub struct ThreadPanicNotify(pub mpsc::Sender<String>, pub String);
+
+impl Drop for ThreadPanicNotify {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            block_on(self.0.send(self.1.clone())).unwrap();
+        }
+    }
+}
+
+pub async fn run_watch_event_task(
+    actor: Actor,
+    local_db: LocalDB,
+    interval: u64,
+) -> anyhow::Result<String> {
+    let goat_client = GOATClient::new(env::goat_config_from_env().await, env::get_goat_network());
+    loop {
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+        if actor == Actor::Relayer {
+            match monitor_events(
+                &goat_client,
+                &local_db,
+                vec![GatewayEventEntity::InitWithdraws, GatewayEventEntity::CancelWithdraws],
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!(e)
+                }
+            }
+        }
+        if actor == Actor::Operator {
+            match monitor_events(
+                &goat_client,
+                &local_db,
+                vec![GatewayEventEntity::ProceedWithdraws],
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!(e)
+                }
+            }
+        }
+    }
+}
+
+pub async fn run_gen_groth16_proof_task(
+    _local_db: LocalDB,
+    interval: u64,
+) -> anyhow::Result<String> {
+    loop {
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+    }
 }

@@ -26,11 +26,14 @@ use bitvm2_noded::middleware::{
     self, AllBehaviours, behaviour::AllBehavioursEvent, split_topic_name,
 };
 use bitvm2_noded::rpc_service;
-use bitvm2_noded::utils::{self, detect_heart_beat, save_local_info};
+use bitvm2_noded::utils::{
+    self, detect_heart_beat, run_gen_groth16_proof_task, run_watch_event_task, save_local_info,
+};
 
 use anyhow::Result;
-use bitvm2_noded::client::graph_query::GatewayEventEntity;
-use bitvm2_noded::relayer_action::monitor_events;
+use futures::future;
+use store::localdb::LocalDB;
+use tokio::sync::watch;
 use tokio::time::interval;
 
 #[derive(Debug, Parser)]
@@ -226,16 +229,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     check_node_info().await;
     save_local_info(&local_db).await;
 
-    tokio::spawn(rpc_service::serve(
-        rpc_addr,
-        db_path.clone(),
+    // let (stop_signal_sender, mut stop_signal_receiver) = oneshot::channel::<String>();
+    let (stop_signal_sender, mut stop_signal_receiver) = watch::channel("".to_string());
+
+    tokio::spawn(run_tasks(
         actor.clone(),
+        rpc_addr,
+        local_db.clone(),
         local_key.public().to_peer_id().to_string(),
         Arc::new(Mutex::new(metric_registry)),
+        stop_signal_sender,
     ));
     // Read full lines from stdin
     let mut heart_beat_interval = interval(Duration::from_secs(300));
-    let mut l2_watch_interval = interval(Duration::from_secs(5));
     let mut interval = interval(Duration::from_secs(20));
     let mut stdin = io::BufReader::new(io::stdin()).lines();
     loop {
@@ -265,6 +271,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
                     }
                 },
+
+                _= stop_signal_receiver.changed() =>{
+                    panic!("{:?}", *stop_signal_receiver.borrow());
+                },
+
                 _ticker = interval.tick() => {
                     // using a ticker to activate the handler of the asynchronous message in local database
                     let peer_id = local_key.public().to_peer_id();
@@ -275,21 +286,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     match action::recv_and_dispatch(&mut swarm, &local_db, &btc_client, &goat_client, &ipfs, actor.clone(), peer_id, GOATMessage::default_message_id(), &tick_data).await{
                         Ok(_) => {}
                         Err(e) => { tracing::error!(e) }
-                    }
-                },
-
-               _ticker = l2_watch_interval.tick() => {
-                    if actor == Actor::Relayer {
-                        match monitor_events(&goat_client,&local_db, vec![GatewayEventEntity::InitWithdraws, GatewayEventEntity::CancelWithdraws]).await{
-                            Ok(_) => {}
-                            Err(e) => { tracing::error!(e) }
-                        }
-                    }
-                    if actor == Actor::Operator {
-                        match monitor_events(&goat_client,&local_db, vec![GatewayEventEntity::ProceedWithdraws]).await{
-                            Ok(_) => {}
-                            Err(e) => { tracing::error!(e) }
-                        }
                     }
                 },
 
@@ -363,4 +359,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+}
+
+pub async fn run_tasks(
+    actor: Actor,
+    rpc_addr: String,
+    local_db: LocalDB,
+    peer_id: String,
+    registry: Arc<Mutex<Registry>>,
+    stop_signal_sender: watch::Sender<String>,
+) {
+    let mut tasks = vec![];
+    tasks.push(tokio::spawn(rpc_service::serve(
+        rpc_addr,
+        local_db.clone(),
+        actor.clone(),
+        peer_id,
+        registry,
+    )));
+    if actor == Actor::Relayer || actor == Actor::Operator {
+        tasks.push(tokio::spawn(run_watch_event_task(actor.clone(), local_db.clone(), 5)));
+    }
+    if actor == Actor::Operator {
+        tasks.push(tokio::spawn(run_gen_groth16_proof_task(local_db.clone(), 5)));
+    }
+    let msg = format!("One task stop. detail: {:?}", future::select_all(tasks).await);
+    _ = stop_signal_sender.send(msg);
 }
