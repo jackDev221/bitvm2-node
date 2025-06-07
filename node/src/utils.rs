@@ -30,9 +30,6 @@ use bitvm2_lib::types::{
 };
 use bitvm2_lib::verifier::{extract_proof_sigs_from_assert_commit_txns, verify_proof};
 use esplora_client::Utxo;
-use futures::SinkExt;
-use futures::channel::mpsc;
-use futures::executor::block_on;
 use goat::commitments::CommitmentMessageId;
 use goat::connectors::base::TaprootConnector;
 use goat::connectors::connector_6::Connector6;
@@ -56,7 +53,10 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
-use store::{BridgeInStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus, Node};
+use store::{
+    BridgeInStatus, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus, Node,
+    ProofWithPis,
+};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -705,20 +705,15 @@ pub async fn get_groth16_proof(
     let (proof, pis) = {
         // query proof from database.
         let mut db_lock = local_db.acquire().await?;
-
-        let _goat_tx_record = db_lock
-            .get_graph_goat_tx_record(
-                graph_id,
-                instance_id,
-                &GoatTxType::ProceedWithdraw.to_string(),
-            )
-            .await?;
-        // TODO use _goat_tx_record.height to get height get proof and pis
-
-        let (proof, pis) = db_lock.get_proof_with_pis(instance_id, graph_id).await?;
-
-        let proof_bytes = hex::decode(proof)?;
-        let pis_bytes = hex::decode(pis)?;
+        let proof_with_pis = db_lock.get_proof_with_pis(instance_id, graph_id).await?;
+        if proof_with_pis.is_none() {
+            return Err(
+                format!("instance_id:{instance_id}, graph_id:{graph_id} not find proof!").into()
+            );
+        }
+        let proof_with_pis = proof_with_pis.unwrap();
+        let proof_bytes = hex::decode(proof_with_pis.proof)?;
+        let pis_bytes = hex::decode(proof_with_pis.pis)?;
         (proof_bytes, pis_bytes)
     };
     let proof: ark_groth16::Proof<ark_bn254::Bn254> =
@@ -934,6 +929,7 @@ pub async fn create_goat_tx_record(
     instance_id: Uuid,
     tx_hash: &str,
     tx_type: GoatTxType,
+    prove_status: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(receipt) = goat_client.get_tx_receipt(tx_hash).await?
         && receipt.block_number.is_some()
@@ -948,6 +944,7 @@ pub async fn create_goat_tx_record(
                 height: receipt.block_number.unwrap() as i64,
                 is_local: true,
                 extra: None,
+                prove_status,
                 created_at: current_time_secs(),
             })
             .await?;
@@ -1410,16 +1407,6 @@ pub async fn obsolete_sibling_graphs(
     Ok(())
 }
 
-pub struct ThreadPanicNotify(pub mpsc::Sender<String>, pub String);
-
-impl Drop for ThreadPanicNotify {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            block_on(self.0.send(self.1.clone())).unwrap();
-        }
-    }
-}
-
 pub async fn run_watch_event_task(
     actor: Actor,
     local_db: LocalDB,
@@ -1460,10 +1447,58 @@ pub async fn run_watch_event_task(
 }
 
 pub async fn run_gen_groth16_proof_task(
-    _local_db: LocalDB,
+    local_db: LocalDB,
     interval: u64,
 ) -> anyhow::Result<String> {
+    let local_operator = get_local_node_info().btc_pub_key;
+    let local_db = &local_db;
     loop {
         tokio::time::sleep(Duration::from_secs(interval)).await;
+        let tx_records = {
+            let mut storage_processor = local_db.acquire().await?;
+            storage_processor
+                .get_goat_tx_record_need_proving(&GoatTxType::ProceedWithdraw.to_string())
+                .await?
+        };
+
+        for record in tx_records {
+            let mut tx = local_db.start_transaction().await?;
+            let operator = tx.get_graph_operator(&record.graph_id).await?;
+            if operator.is_none() || operator.unwrap() != local_operator {
+                tx.update_goat_tx_record_prove_status(
+                    &record.graph_id,
+                    &record.instance_id,
+                    &record.tx_type,
+                    &GoatTxProveStatus::NoNeed.to_string(),
+                )
+                .await?;
+                tx.commit().await?;
+                continue;
+            }
+
+            // TODO
+            let proof = "".to_string();
+            let pis = "".to_string();
+            let cast = 0;
+
+            tx.create_or_update_proof_with_pis(ProofWithPis {
+                instance_id: record.graph_id,
+                graph_id: Some(record.graph_id),
+                proof,
+                pis,
+                goat_block_number: record.height,
+                proof_cast: 0,
+                created_at: current_time_secs() - cast,
+            })
+            .await?;
+            tx.update_goat_tx_record_prove_status(
+                &record.graph_id,
+                &record.instance_id,
+                &record.tx_type,
+                &GoatTxProveStatus::Proved.to_string(),
+            )
+            .await?;
+            tx.commit().await?;
+        }
     }
 }

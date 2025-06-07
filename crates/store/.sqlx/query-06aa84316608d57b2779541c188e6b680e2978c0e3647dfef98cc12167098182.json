@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, tx_hash, height, is_local,  extra, created_at From goat_tx_record where instance_id = ? AND graph_id = ? AND tx_type = ?",
+  "query": "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", proof, pis,  goat_block_number, proof_cast, created_at From proof_with_pis where instance_id = ? AND graph_id = ?",
   "describe": {
     "columns": [
       {
@@ -14,49 +14,43 @@
         "type_info": "Text"
       },
       {
-        "name": "tx_type",
+        "name": "proof",
         "ordinal": 2,
         "type_info": "Text"
       },
       {
-        "name": "tx_hash",
+        "name": "pis",
         "ordinal": 3,
         "type_info": "Text"
       },
       {
-        "name": "height",
+        "name": "goat_block_number",
         "ordinal": 4,
         "type_info": "Integer"
       },
       {
-        "name": "is_local",
+        "name": "proof_cast",
         "ordinal": 5,
-        "type_info": "Bool"
-      },
-      {
-        "name": "extra",
-        "ordinal": 6,
-        "type_info": "Text"
+        "type_info": "Integer"
       },
       {
         "name": "created_at",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Integer"
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 2
     },
     "nullable": [
       false,
-      false,
-      false,
-      false,
-      false,
-      false,
       true,
+      false,
+      false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "b7d8873e5c66a05f773fd81640528f50703eaecf623fe7bc85894274281e15ee"
+  "hash": "06aa84316608d57b2779541c188e6b680e2978c0e3647dfef98cc12167098182"
 }
