@@ -42,8 +42,8 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
 use store::{
-    BridgeInStatus, BridgePath, GoatTxRecord, GoatTxType, GraphStatus, GraphTickActionMetaData,
-    MessageState, MessageType, WatchContract, WatchContractStatus,
+    BridgeInStatus, BridgePath, GoatTxProofStatus, GoatTxRecord, GoatTxType, GraphStatus,
+    GraphTickActionMetaData, MessageState, MessageType, WatchContract, WatchContractStatus,
 };
 use tokio::time::sleep;
 use tracing::{info, warn};
@@ -255,6 +255,7 @@ async fn handle_proceed_withdraw_events<'a>(
                 tx_hash: event.transaction_hash,
                 height: event.block_number.parse::<i64>()?,
                 is_local: false,
+                proof_status: GoatTxProofStatus::Pending.to_string(),
                 extra: Some(event.kickoff_txid),
                 created_at: current_time_secs(),
             })
@@ -592,6 +593,7 @@ pub async fn scan_post_pegin_data(
                         instance.instance_id,
                         &tx_hash,
                         GoatTxType::PostPeginData,
+                        GoatTxProofStatus::NoNeed.to_string(),
                     )
                     .await?;
 
@@ -656,6 +658,7 @@ pub async fn scan_post_operator_data(
                         instance.instance_id,
                         &tx_hash,
                         GoatTxType::PostOperatorData,
+                        GoatTxProofStatus::NoNeed.to_string(),
                     )
                     .await?;
 
@@ -766,6 +769,7 @@ pub async fn scan_kickoff(
                         instance_id,
                         &tx_hash,
                         GoatTxType::ProceedWithdraw,
+                        GoatTxProofStatus::Pending.to_string(),
                     )
                     .await?;
 
@@ -945,6 +949,7 @@ pub async fn scan_take1(
                             instance_id,
                             &tx_hash,
                             GoatTxType::WithdrawHappyPath,
+                            GoatTxProofStatus::NoNeed.to_string(),
                         )
                         .await?;
                         update_graph_fields(
@@ -1082,6 +1087,7 @@ pub async fn scan_take2(
                             instance_id,
                             &tx_hash,
                             GoatTxType::WithdrawUnhappyPath,
+                            GoatTxProofStatus::NoNeed.to_string(),
                         )
                         .await?;
                         update_graph_fields(
@@ -1126,6 +1132,7 @@ pub async fn scan_take2(
                     instance_id,
                     &tx_hash,
                     GoatTxType::WithdrawDisproved,
+                    GoatTxProofStatus::NoNeed.to_string(),
                 )
                 .await?;
                 // in case challenger never broadcast DisproveSent

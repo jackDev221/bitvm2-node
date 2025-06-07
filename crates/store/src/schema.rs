@@ -621,6 +621,32 @@ impl std::fmt::Display for GoatTxType {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum GoatTxProofStatus {
+    #[default]
+    NoNeed,
+    Pending,
+    Proved,
+}
+
+impl FromStr for GoatTxProofStatus {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "NoNeed" => Ok(GoatTxProofStatus::NoNeed),
+            "Pending" => Ok(GoatTxProofStatus::Pending),
+            "Proved" => Ok(GoatTxProofStatus::Proved),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for GoatTxProofStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
 pub struct GoatTxRecord {
     pub instance_id: Uuid,
@@ -629,6 +655,7 @@ pub struct GoatTxRecord {
     pub tx_hash: String,
     pub height: i64,
     pub is_local: bool,
+    pub proof_status: String,
     pub extra: Option<String>,
     pub created_at: i64,
 }

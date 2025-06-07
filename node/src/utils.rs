@@ -934,6 +934,7 @@ pub async fn create_goat_tx_record(
     instance_id: Uuid,
     tx_hash: &str,
     tx_type: GoatTxType,
+    proof_status: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(receipt) = goat_client.get_tx_receipt(tx_hash).await?
         && receipt.block_number.is_some()
@@ -948,6 +949,7 @@ pub async fn create_goat_tx_record(
                 height: receipt.block_number.unwrap() as i64,
                 is_local: true,
                 extra: None,
+                proof_status,
                 created_at: current_time_secs(),
             })
             .await?;

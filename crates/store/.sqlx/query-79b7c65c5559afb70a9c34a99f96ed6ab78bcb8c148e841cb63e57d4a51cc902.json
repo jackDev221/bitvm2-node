@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO goat_tx_record (instance_id, graph_id, tx_type, tx_hash, height, is_local,  proof_status, extra, created_at)  VALUES  (?, ?, ?, ?, ?, ?, ?, ?,?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "79b7c65c5559afb70a9c34a99f96ed6ab78bcb8c148e841cb63e57d4a51cc902"
+}

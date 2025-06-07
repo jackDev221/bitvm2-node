@@ -1462,14 +1462,15 @@ impl<'a> StorageProcessor<'a> {
         goat_tx_record: &GoatTxRecord,
     ) -> anyhow::Result<()> {
         let _ = sqlx::query!(
-            "INSERT OR REPLACE INTO goat_tx_record (instance_id, graph_id, tx_type, tx_hash, height, is_local, extra, created_at)  \
-       VALUES  (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO goat_tx_record (instance_id, graph_id, tx_type, tx_hash, height, is_local,  proof_status, extra, created_at)  \
+       VALUES  (?, ?, ?, ?, ?, ?, ?, ?,?)",
             goat_tx_record.instance_id,
             goat_tx_record.graph_id,
             goat_tx_record.tx_type,
             goat_tx_record.tx_hash,
             goat_tx_record.height,
             goat_tx_record.is_local,
+            goat_tx_record.proof_status,
             goat_tx_record.extra,
             goat_tx_record.created_at
         ).execute(self.conn()).await;
@@ -1485,7 +1486,7 @@ impl<'a> StorageProcessor<'a> {
         Ok(
             sqlx::query_as!(
                 GoatTxRecord,
-                "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, tx_hash, height, is_local,  extra, created_at From goat_tx_record where instance_id = ? AND graph_id = ? AND tx_type = ?",
+                "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, tx_hash, height, is_local, proof_status, extra, created_at From goat_tx_record where instance_id = ? AND graph_id = ? AND tx_type = ?",
                 instance_id,
                 graph_id,
                 tx_type
