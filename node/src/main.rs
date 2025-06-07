@@ -26,9 +26,7 @@ use bitvm2_noded::middleware::{
     self, AllBehaviours, behaviour::AllBehavioursEvent, split_topic_name,
 };
 use bitvm2_noded::rpc_service;
-use bitvm2_noded::utils::{
-    self, detect_heart_beat, run_gen_groth16_proof_task, run_watch_event_task, save_local_info,
-};
+use bitvm2_noded::utils::{self, detect_heart_beat, run_watch_event_task, save_local_info};
 
 use anyhow::Result;
 use futures::future;
@@ -380,9 +378,9 @@ pub async fn run_tasks(
     if actor == Actor::Relayer || actor == Actor::Operator {
         tasks.push(tokio::spawn(run_watch_event_task(actor.clone(), local_db.clone(), 5)));
     }
-    if actor == Actor::Operator {
-        tasks.push(tokio::spawn(run_gen_groth16_proof_task(local_db.clone(), 5)));
-    }
+    // if actor == Actor::Operator {
+    //     tasks.push(tokio::spawn(run_gen_groth16_proof_task(local_db.clone(), 5)));
+    // }
     let msg = format!("One task stop. detail: {:?}", future::select_all(tasks).await);
     _ = stop_signal_sender.send(msg);
 }

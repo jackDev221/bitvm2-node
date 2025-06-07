@@ -23,7 +23,7 @@ use musig2::{AggNonce, PartialSignature, PubNonce, SecNonce};
 use serde::{Deserialize, Serialize};
 use store::ipfs::IPFS;
 use store::localdb::LocalDB;
-use store::{GoatTxType, GraphStatus};
+use store::{GoatTxProveStatus, GoatTxType, GraphStatus};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1097,6 +1097,7 @@ pub async fn recv_and_dispatch(
                     receive_data.instance_id,
                     &tx_hash,
                     GoatTxType::WithdrawHappyPath,
+                    GoatTxProveStatus::NoNeed.to_string(),
                 )
                 .await?;
                 update_graph_fields(
@@ -1132,6 +1133,7 @@ pub async fn recv_and_dispatch(
                     receive_data.instance_id,
                     &tx_hash,
                     GoatTxType::WithdrawUnhappyPath,
+                    GoatTxProveStatus::NoNeed.to_string(),
                 )
                 .await?;
                 update_graph_fields(
@@ -1183,6 +1185,7 @@ pub async fn recv_and_dispatch(
                     receive_data.instance_id,
                     &tx_hash,
                     GoatTxType::WithdrawDisproved,
+                    GoatTxProveStatus::NoNeed.to_string(),
                 )
                 .await?;
                 update_graph_fields(

@@ -390,6 +390,25 @@ impl<'a> StorageProcessor<'a> {
         Ok(res)
     }
 
+    pub async fn get_graph_operator(&mut self, graph_id: &Uuid) -> anyhow::Result<Option<String>> {
+        #[derive(sqlx::FromRow)]
+        struct OperatorRow {
+            operator: String,
+        }
+        if let Some(operator_raw) = sqlx::query_as!(
+            OperatorRow,
+            "SELECT   operator  FROM graph WHERE  graph_id = ?",
+            graph_id
+        )
+        .fetch_optional(self.conn())
+        .await?
+        {
+            Ok(Some(operator_raw.operator))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn filter_graphs(
         &mut self,
         mut params: FilterGraphParams,
@@ -967,27 +986,39 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
+    pub async fn create_or_update_proof_with_pis(
+        &mut self,
+        proof_with_pis: ProofWithPis,
+    ) -> anyhow::Result<()> {
+        sqlx::query!(
+            "INSERT OR REPLACE INTO proof_with_pis (instance_id, graph_id,  proof, pis, proof_cast, goat_block_number, created_at) \
+       VALUES  (?, ?, ?, ?, ?, ?, ?)",
+            proof_with_pis.instance_id,
+            proof_with_pis.graph_id,
+            proof_with_pis.proof,
+            proof_with_pis.pis,
+            proof_with_pis.proof_cast,
+            proof_with_pis.goat_block_number,
+            proof_with_pis.created_at
+        )
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_proof_with_pis(
         &mut self,
         instance_id: &Uuid,
         graph_id: &Uuid,
-    ) -> anyhow::Result<(String, String)> {
-        let proof_with_pis = sqlx::query_as!(
+    ) -> anyhow::Result<Option<ProofWithPis>> {
+        Ok(sqlx::query_as!(
             ProofWithPis,
-            "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", proof, pis, created_at From proof_with_pis where instance_id = ? AND graph_id = ?",
+            "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", proof, pis,  goat_block_number, proof_cast, created_at From proof_with_pis where instance_id = ? AND graph_id = ?",
             instance_id,
             graph_id
         )
             .fetch_optional(self.conn())
-            .await?;
-        // FIXME: we use a default proof here, will remove later
-        match proof_with_pis {
-            Some(proof) => Ok((proof.proof, proof.pis)),
-            None => Ok((
-                "a232396203abfa6c31ce497e1923b29423db625a7ab1105be9d7de0c48b835023ea6324462abdada97b185df813572ecb5d7df5b66e1347a7ace247ad526baaaebd2b3dd7a254a264f001a5e3b922efc4699ec7ec2a9119064da761663e2842818f8e8c5c3dcfe3424f812a7a7ce6c1d78bc124e560879d990b97a3a0c222c06e950b1b70508964af18d419623620f9689fe84a7e4683f850bd1274f8ab95814f2664549f3581d5b7f9d52c0345f8f31e353131a6c3fe8d5a940dd9fd6dcf6ae232b8f50a88e1d67b33aeb21a3c6ffbc14035b2f9e7ae2c9af8a1218b2db4e0c600a028523e695ebce01b1d3f5a84a3e1973462a26835c6767b0d4dfb1f25e0e".to_string(),
-                "e8ffffef93f5e1439170b97948e833285d588181b64550b829a031e1724e6430".to_string(),
-            ))
-        }
+            .await?)
     }
 
     pub async fn get_block_execution_start_time(
@@ -1462,14 +1493,15 @@ impl<'a> StorageProcessor<'a> {
         goat_tx_record: &GoatTxRecord,
     ) -> anyhow::Result<()> {
         let _ = sqlx::query!(
-            "INSERT OR REPLACE INTO goat_tx_record (instance_id, graph_id, tx_type, tx_hash, height, is_local, extra, created_at)  \
-       VALUES  (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO goat_tx_record (instance_id, graph_id, tx_type, tx_hash, height, is_local, \
+       prove_status, extra, created_at)  VALUES  (?, ?, ?, ?, ?, ?, ?, ?,?) ",
             goat_tx_record.instance_id,
             goat_tx_record.graph_id,
             goat_tx_record.tx_type,
             goat_tx_record.tx_hash,
             goat_tx_record.height,
             goat_tx_record.is_local,
+            goat_tx_record.prove_status,
             goat_tx_record.extra,
             goat_tx_record.created_at
         ).execute(self.conn()).await;
@@ -1485,13 +1517,63 @@ impl<'a> StorageProcessor<'a> {
         Ok(
             sqlx::query_as!(
                 GoatTxRecord,
-                "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, tx_hash, height, is_local,  extra, created_at From goat_tx_record where instance_id = ? AND graph_id = ? AND tx_type = ?",
+                "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, tx_hash, \
+                 height, is_local, prove_status, extra, created_at From goat_tx_record where instance_id = ? AND graph_id = ? AND tx_type = ?",
                 instance_id,
                 graph_id,
                 tx_type
             ).fetch_optional(self.conn())
             .await?
         )
+    }
+
+    pub async fn get_goat_tx_record_need_proving(
+        &mut self,
+        tx_type: &str,
+    ) -> anyhow::Result<Vec<GoatTxRecord>> {
+        Ok(
+            sqlx::query_as!(
+                GoatTxRecord,
+                "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, \
+                 tx_hash, height, is_local, prove_status, extra, created_at From goat_tx_record where tx_type = ?  \
+                 AND prove_status = 'Proving' ORDER BY height asc",
+                tx_type
+            ).fetch_all(self.conn())
+                .await?
+        )
+    }
+
+    pub async fn get_process_withdraw_record(
+        &mut self,
+        block_number: i64,
+    ) -> anyhow::Result<Vec<GoatTxRecord>> {
+        Ok(
+            sqlx::query_as!(
+                GoatTxRecord,
+                "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, \
+                 tx_hash, height, is_local, prove_status, extra, created_at From goat_tx_record where height = ?  \
+                 AND tx_type = 'ProceedWithdraw' ORDER BY height asc",
+                block_number
+            ).fetch_all(self.conn())
+                .await?
+        )
+    }
+
+    pub async fn update_goat_tx_record_prove_status(
+        &mut self,
+        graph_id: &Uuid,
+        instance_id: &Uuid,
+        tx_type: &str,
+        status: &str,
+    ) -> anyhow::Result<()> {
+        sqlx::query!(
+            "UPDATE goat_tx_record SET prove_status = ?  where instance_id = ? AND graph_id = ? AND tx_type = ? ",
+            status,
+            instance_id,
+            graph_id,
+            tx_type
+            ).execute(self.conn()).await?;
+        Ok(())
     }
 }
 
