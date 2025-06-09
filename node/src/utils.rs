@@ -57,6 +57,7 @@ use store::{
     BridgeInStatus, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus, Node,
     ProofWithPis,
 };
+use tokio::time::sleep;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -1325,7 +1326,7 @@ pub async fn detect_heart_beat(
     swarm: &mut Swarm<AllBehaviours>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("start detect_heart_beat");
-    let message_content = GOATMessageContent::RequestNodeInfo(get_local_node_info());
+    let message_content = GOATMessageContent::NodeInfoRequest(get_local_node_info());
     // send to actor
     let actors = get_rpc_support_actors();
     for actor in actors {
@@ -1414,7 +1415,7 @@ pub async fn run_watch_event_task(
 ) -> anyhow::Result<String> {
     let goat_client = GOATClient::new(env::goat_config_from_env().await, env::get_goat_network());
     loop {
-        tokio::time::sleep(Duration::from_secs(interval)).await;
+        sleep(Duration::from_secs(interval)).await;
         if actor == Actor::Relayer {
             match monitor_events(
                 &goat_client,
@@ -1453,7 +1454,7 @@ pub async fn run_gen_groth16_proof_task(
     let local_operator = get_local_node_info().btc_pub_key;
     let local_db = &local_db;
     loop {
-        tokio::time::sleep(Duration::from_secs(interval)).await;
+        sleep(Duration::from_secs(interval)).await;
         let tx_records = {
             let mut storage_processor = local_db.acquire().await?;
             storage_processor
@@ -1500,5 +1501,16 @@ pub async fn run_gen_groth16_proof_task(
             .await?;
             tx.commit().await?;
         }
+    }
+}
+
+pub async fn run_sync_proof_info_task(
+    _actor: Actor,
+    _local_db: LocalDB,
+    interval: u64,
+) -> anyhow::Result<String> {
+    loop {
+        sleep(Duration::from_secs(interval)).await;
+        // TODO through table message to connect p2p
     }
 }

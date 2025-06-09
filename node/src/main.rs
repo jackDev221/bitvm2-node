@@ -27,7 +27,8 @@ use bitvm2_noded::middleware::{
 };
 use bitvm2_noded::rpc_service;
 use bitvm2_noded::utils::{
-    self, detect_heart_beat, run_gen_groth16_proof_task, run_watch_event_task, save_local_info,
+    self, detect_heart_beat, run_gen_groth16_proof_task, run_sync_proof_info_task,
+    run_watch_event_task, save_local_info,
 };
 
 use anyhow::Result;
@@ -231,7 +232,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // let (stop_signal_sender, mut stop_signal_receiver) = oneshot::channel::<String>();
     let (stop_signal_sender, mut stop_signal_receiver) = watch::channel("".to_string());
-
     tokio::spawn(run_tasks(
         actor.clone(),
         rpc_addr,
@@ -319,7 +319,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         tracing::debug!("subscribed: {:?}, {:?}", peer_id, topic);
                         // Except for the bootNode, all other nodes need to request information from other nodes after registering the event `ALL`.
                         if topic == Actor::All.to_string() && opt.bootnodes.is_empty() {
-                            let message_content = GOATMessageContent::RequestNodeInfo(get_local_node_info());
+                            let message_content = GOATMessageContent::NodeInfoRequest(get_local_node_info());
                             send_to_peer(&mut swarm, GOATMessage::from_typed(Actor::All, &message_content)?)?;
                         }
 
@@ -383,6 +383,11 @@ pub async fn run_tasks(
     if actor == Actor::Operator {
         tasks.push(tokio::spawn(run_gen_groth16_proof_task(local_db.clone(), 5)));
     }
+
+    if actor == Actor::Relayer {
+        tasks.push(tokio::spawn(run_sync_proof_info_task(actor, local_db.clone(), 5)));
+    }
+
     let msg = format!("One task stop. detail: {:?}", future::select_all(tasks).await);
     _ = stop_signal_sender.send(msg);
 }

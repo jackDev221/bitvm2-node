@@ -49,10 +49,12 @@ pub enum GOATMessageContent {
     Take2Ready(Take2Ready),
     Take2Sent(Take2Sent),
     DisproveSent(DisproveSent),
-    RequestNodeInfo(NodeInfo),
-    ResponseNodeInfo(NodeInfo),
+    NodeInfoRequest(NodeInfo),
+    NodeInfo(NodeInfo),
     SyncGraphRequest(SyncGraphRequest),
     SyncGraph(SyncGraph),
+    SyncProofInfoRequest(SyncProofInfoRequest),
+    SyncProofInfo(SyncProofInfo),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -192,6 +194,12 @@ pub struct SyncGraph {
     pub graph: SimplifiedBitvm2Graph,
     pub graph_status: GraphStatus,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct SyncProofInfoRequest {}
+
+#[derive(Serialize, Deserialize)]
+pub struct SyncProofInfo {}
 
 impl GOATMessage {
     pub fn from_typed<T: Serialize>(actor: Actor, value: &T) -> Result<Self, serde_json::Error> {
@@ -1325,6 +1333,9 @@ pub async fn recv_and_dispatch(
             }
         }
 
+        (GOATMessageContent::SyncProofInfoRequest(_receive_data), Actor::Operator) => {}
+        (GOATMessageContent::SyncProofInfo(_receive_data), Actor::Relayer) => {}
+
         // Other participants update graph status
         (GOATMessageContent::KickoffSent(receive_data), _) => {
             tracing::info!("Handle KickoffSent");
@@ -1504,13 +1515,13 @@ pub async fn recv_and_dispatch(
             }
         }
 
-        (GOATMessageContent::RequestNodeInfo(node_info), _) => {
+        (GOATMessageContent::NodeInfoRequest(node_info), _) => {
             save_node_info(local_db, &node_info).await?;
-            let message_content = GOATMessageContent::ResponseNodeInfo(get_local_node_info());
+            let message_content = GOATMessageContent::NodeInfo(get_local_node_info());
             send_to_peer(swarm, GOATMessage::from_typed(Actor::All, &message_content)?)?;
         }
 
-        (GOATMessageContent::ResponseNodeInfo(node_info), _) => {
+        (GOATMessageContent::NodeInfo(node_info), _) => {
             save_node_info(local_db, &node_info).await?;
         }
 

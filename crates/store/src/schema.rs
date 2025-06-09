@@ -452,10 +452,47 @@ pub enum MessageType {
     Take2Ready,
     Take2Sent,
     DisproveSent,
+    NodeInfoRequest,
+    NodeInfo,
+    SyncGraphRequest,
+    SyncGraph,
+    SyncProofInfoRequest,
+    SyncProofInfo,
 }
 impl std::fmt::Display for MessageType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{self:?}")
+    }
+}
+
+impl FromStr for MessageType {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "BridgeInData" => Ok(MessageType::BridgeInData),
+            "CreateInstance" => Ok(MessageType::CreateInstance),
+            "CreateGraphPrepare" => Ok(MessageType::CreateGraphPrepare),
+            "CreateGraph" => Ok(MessageType::CreateGraph),
+            "NonceGeneration" => Ok(MessageType::NonceGeneration),
+            "CommitteePresign" => Ok(MessageType::CommitteePresign),
+            "GraphFinalize" => Ok(MessageType::GraphFinalize),
+            "KickoffReady" => Ok(MessageType::KickoffReady),
+            "KickoffSent" => Ok(MessageType::KickoffSent),
+            "Take1Ready" => Ok(MessageType::Take1Ready),
+            "Take1Sent" => Ok(MessageType::Take1Sent),
+            "ChallengeSent" => Ok(MessageType::ChallengeSent),
+            "AssertSent" => Ok(MessageType::AssertSent),
+            "Take2Ready" => Ok(MessageType::Take2Ready),
+            "Take2Sent" => Ok(MessageType::Take2Sent),
+            "DisproveSent" => Ok(MessageType::DisproveSent),
+            "NodeInfoRequest" => Ok(MessageType::NodeInfoRequest),
+            "NodeInfo" => Ok(MessageType::NodeInfo),
+            "SyncGraphRequest" => Ok(MessageType::SyncGraphRequest),
+            "SyncGraph" => Ok(MessageType::SyncGraph),
+            "SyncProofInfoRequest" => Ok(MessageType::SyncProofInfoRequest),
+            "SyncProofInfo" => Ok(MessageType::SyncProofInfo),
+            _ => Err(()),
+        }
     }
 }
 

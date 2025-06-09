@@ -424,38 +424,66 @@ pub async fn monitor_events(
     Ok(())
 }
 
-pub async fn scan_bridge_in_prepare(
+pub async fn scan_p2p_msg_send_requets(
     swarm: &mut Swarm<AllBehaviours>,
     local_db: &LocalDB,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("start tick scan_bridge_in_prepare");
+    info!("start tick scan_p2p_msg_send_requets");
     let mut storage_process = local_db.acquire().await?;
-    let current_time =
-        std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
     let messages = storage_process
-        .filter_messages(
-            MessageType::BridgeInData.to_string(),
-            MessageState::Pending.to_string(),
-            current_time - MESSAGE_EXPIRE_TIME,
-        )
+        .filter_messages(MessageState::Pending.to_string(), current_time - MESSAGE_EXPIRE_TIME)
         .await?;
 
     let mut ids = vec![];
     info!("messages size :{}", messages.len());
 
     for message in messages {
-        let p2p_data: P2pUserData = serde_json::from_slice(&message.content)?;
-        let message_content = GOATMessageContent::CreateInstance(CreateInstance {
-            instance_id: p2p_data.instance_id,
-            network: p2p_data.network,
-            depositor_evm_address: p2p_data.depositor_evm_address,
-            pegin_amount: p2p_data.pegin_amount,
-            user_inputs: p2p_data.user_inputs,
-        });
-        send_to_peer(swarm, GOATMessage::from_typed(Actor::Committee, &message_content)?)?;
+        let actor_res = Actor::from_str(&message.actor);
+        let message_type_res = MessageType::from_str(&message.msg_type);
+        if actor_res.is_err() || message_type_res.is_err() {
+            warn!(
+                "message actor fail to decode, detail: actor: {}, message type: {}",
+                message.actor, message.msg_type
+            );
+            storage_process
+                .update_messages_state(&ids, MessageState::Failed.to_string(), current_time)
+                .await?;
+            continue;
+        }
+        let actor = actor_res.unwrap();
+        let msg_type = message_type_res.unwrap();
+
+        let message_content = match msg_type {
+            MessageType::BridgeInData => {
+                let p2p_data: P2pUserData = serde_json::from_slice(&message.content)?;
+                Some(GOATMessageContent::CreateInstance(CreateInstance {
+                    instance_id: p2p_data.instance_id,
+                    network: p2p_data.network,
+                    depositor_evm_address: p2p_data.depositor_evm_address,
+                    pegin_amount: p2p_data.pegin_amount,
+                    user_inputs: p2p_data.user_inputs,
+                }))
+            }
+            MessageType::SyncProofInfoRequest => Some(GOATMessageContent::SyncProofInfoRequest(
+                serde_json::from_slice(&message.content)?,
+            )),
+            _ => {
+                info!(
+                    "not to send msg for message. detail id: {}, msg_type:{}",
+                    message.id, message.msg_type
+                );
+                None
+            }
+        };
+
+        if let Some(message_content) = message_content {
+            send_to_peer(swarm, GOATMessage::from_typed(actor, &message_content)?)?;
+        }
+
         ids.push(message.id)
     }
-    info!("send msg:{:?} for create instances", ids);
+    info!("finish handle msg:{:?}", ids);
     storage_process
         .update_messages_state(&ids, MessageState::Processed.to_string(), current_time)
         .await?;
@@ -1201,8 +1229,8 @@ pub async fn do_tick_action(
     btc_client: &BTCClient,
     goat_client: &GOATClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(err) = scan_bridge_in_prepare(swarm, local_db).await {
-        warn!("scan_bridge_in_prepare, err {:?}", err)
+    if let Err(err) = scan_p2p_msg_send_requets(swarm, local_db).await {
+        warn!("scan_p2p_msg_send_requets, err {:?}", err)
     }
 
     if let Err(err) = scan_l1_broadcast_txs(swarm, local_db, btc_client).await {

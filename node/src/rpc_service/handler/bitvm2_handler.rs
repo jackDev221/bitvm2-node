@@ -11,6 +11,7 @@ use bitcoin::address::NetworkUnchecked;
 use bitcoin::consensus::encode::{deserialize_hex, serialize_hex};
 use bitcoin::{Address, AddressType};
 use bitcoin::{Network, PublicKey, Txid};
+use bitvm2_lib::actors::Actor;
 use bitvm2_lib::types::Bitvm2Graph;
 use esplora_client::AsyncClient;
 use goat::transactions::pre_signed::PreSignedTransaction;
@@ -85,7 +86,7 @@ pub async fn bridge_in_tx_prepare(
         tx.create_message(
             Message {
                 id: 0,
-                actor: app_state.actor.to_string(),
+                actor: Actor::Committee.to_string(),
                 from_peer: app_state.peer_id.clone(),
                 msg_type: MessageType::BridgeInData.to_string(),
                 content,
