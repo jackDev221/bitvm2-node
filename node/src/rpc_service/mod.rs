@@ -3,7 +3,7 @@ mod bitvm2;
 mod handler;
 mod node;
 
-use crate::client::{BTCClient, create_local_db};
+use crate::client::BTCClient;
 use crate::env::get_network;
 use crate::metrics_service::{MetricsState, metrics_handler, metrics_middleware};
 use crate::rpc_service::handler::{bitvm2_handler::*, node_handler::*};
@@ -45,12 +45,12 @@ pub struct AppState {
 
 impl AppState {
     pub async fn create_arc_app_state(
-        db_path: &str,
+        local_db: LocalDB,
         actor: Actor,
         peer_id: String,
         registry: Arc<Mutex<Registry>>,
     ) -> anyhow::Result<Arc<AppState>> {
-        let local_db = create_local_db(db_path).await;
+        // let local_db = create_local_db(db_path).await;
         let btc_client = BTCClient::new(None, get_network());
         let metrics_state = MetricsState::new(registry);
         Ok(Arc::new(AppState { local_db, btc_client, metrics_state, actor, peer_id }))
@@ -65,12 +65,12 @@ async fn root() -> &'static str {
 
 pub async fn serve(
     addr: String,
-    db_path: String,
+    local_db: LocalDB,
     actor: Actor,
     peer_id: String,
     registry: Arc<Mutex<Registry>>,
-) -> anyhow::Result<()> {
-    let app_state = AppState::create_arc_app_state(&db_path, actor, peer_id, registry).await?;
+) -> anyhow::Result<String> {
+    let app_state = AppState::create_arc_app_state(local_db, actor, peer_id, registry).await?;
     let server = Router::new()
         .route("/", get(root))
         .route("/v1/nodes", post(create_node))
@@ -133,7 +133,7 @@ pub async fn serve(
     let listener = TcpListener::bind(addr).await.unwrap();
     tracing::info!("RPC listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, server).await.unwrap();
-    Ok(())
+    Ok("Rpc Server stop".to_string())
 }
 
 /// This method introduces performance overhead and is temporarily used for debugging with the frontend.
@@ -170,6 +170,7 @@ async fn print_req_and_resp_detail(
 
 #[cfg(test)]
 mod tests {
+    use crate::client::create_local_db;
     use crate::rpc_service::{self, Actor};
     use crate::utils::{generate_random_bytes, get_rand_btc_address};
     use bitcoin::Network;
@@ -205,10 +206,10 @@ mod tests {
         let peer_id = local_key.public().to_peer_id().to_string();
         let pub_key = hex::encode(generate_random_bytes(33));
         let goat_addr = format!("0x{}", hex::encode(generate_random_bytes(20)));
-
+        let local_db = create_local_db(&temp_file()).await;
         tokio::spawn(rpc_service::serve(
             addr.clone(),
-            temp_file(),
+            local_db,
             actor,
             peer_id.clone(),
             Arc::new(Mutex::new(Registry::default())),
@@ -261,9 +262,10 @@ mod tests {
         let actor = Actor::Challenger;
         let local_key = identity::generate_local_key();
         let peer_id = local_key.public().to_peer_id().to_string();
+        let local_db = create_local_db(&temp_file()).await;
         tokio::spawn(rpc_service::serve(
             addr.clone(),
-            temp_file(),
+            local_db,
             actor,
             peer_id,
             Arc::new(Mutex::new(Registry::default())),

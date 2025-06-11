@@ -1,13 +1,69 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GatewayEventEntity {
+    InitWithdraws,
+    CancelWithdraws,
+    ProceedWithdraws,
+}
+
+impl std::fmt::Display for GatewayEventEntity {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        // write!(f, "{self:?}")
+        match self {
+            GatewayEventEntity::InitWithdraws => write!(f, "initWithdraws"),
+            GatewayEventEntity::CancelWithdraws => write!(f, "cancelWithdraws"),
+            GatewayEventEntity::ProceedWithdraws => write!(f, "proceedWithdraws"),
+        }
+    }
+}
+
+impl GatewayEventEntity {
+    pub fn add_single_query(
+        &self,
+        builder: QueryBuilder,
+        block_range: Option<BlockRange>,
+    ) -> QueryBuilder {
+        let mut builder = builder;
+        let tag = self.to_string();
+        builder = builder.add_query(&tag);
+        match self {
+            GatewayEventEntity::InitWithdraws | GatewayEventEntity::CancelWithdraws => {
+                builder = builder
+                    .add_field(&tag, "id")
+                    .add_field(&tag, "instanceId")
+                    .add_field(&tag, "graphId")
+                    .add_field(&tag, "transactionHash")
+                    .add_field(&tag, "blockNumber")
+                    .set_order_by(&tag, "blockNumber", "asc");
+            }
+            GatewayEventEntity::ProceedWithdraws => {
+                builder = builder
+                    .add_field(&tag, "id")
+                    .add_field(&tag, "instanceId")
+                    .add_field(&tag, "graphId")
+                    .add_field(&tag, "transactionHash")
+                    .add_field(&tag, "blockNumber")
+                    .add_field(&tag, "kickoffTxid")
+                    .set_order_by(&tag, "blockNumber", "asc");
+            }
+        }
+
+        if let Some(range) = block_range {
+            builder = builder
+                .add_filter(&tag, "blockNumber_gte", &range.start_block.to_string())
+                .add_filter(&tag, "blockNumber_lte", &range.end_block.to_string())
+        }
+        builder
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum UserGraphWithdrawEvent {
     InitWithdraw(InitWithdrawEvent),
     CancelWithdraw(CancelWithdrawEvent),
 }
 
-pub const INIT_WITHDRAW_EVENT_ENTITY: &str = "initWithdraws";
-pub const CANCEL_WITHDRAW_EVENT_ENTITY: &str = "cancelWithdraws";
 impl UserGraphWithdrawEvent {
     pub fn get_block_number(&self) -> i64 {
         match self {
@@ -47,7 +103,22 @@ pub struct CancelWithdrawEvent {
     pub graph_id: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProceedWithdrawEvent {
+    pub id: String,
+    #[serde(rename = "transactionHash")]
+    pub transaction_hash: String,
+    #[serde(rename = "blockNumber")]
+    pub block_number: String,
+    #[serde(rename = "instanceId")]
+    pub instance_id: String,
+    #[serde(rename = "graphId")]
+    pub graph_id: String,
+    #[serde(rename = "kickoffTxid")]
+    pub kickoff_txid: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct BlockRange {
     start_block: i64,
     end_block: i64,
@@ -129,20 +200,19 @@ impl QueryBuilder {
 
     pub fn build(self) -> String {
         let mut query = String::from("query {");
-
         for q in self.queries {
             query.push_str(&format!("\n{}(", q.entity));
             // Add where clause if there are filters
             if !q.filters.is_empty() {
                 query.push_str("where: {");
                 for (field, value) in q.filters {
-                    query.push_str(&format!("{field}: \"{value}\","));
+                    query.push_str(&format!("{field}: \"{value}\", "));
                 }
-                query.push_str("},");
+                query.push_str("}, ");
             }
             // Add order by if specified
             if let (Some(order_by), Some(direction)) = (q.order_by, q.order_direction) {
-                query.push_str(&format!("orderBy: {order_by}, orderDirection: {direction},"));
+                query.push_str(&format!("orderBy: {order_by}, orderDirection: {direction}, "));
             }
             // Add pagination if specified
             if let Some(first) = q.first {
@@ -158,50 +228,18 @@ impl QueryBuilder {
             }
             query.push_str(" }");
         }
-
         query.push_str("\n}");
         query
     }
 }
 
-pub fn get_user_withdraw_events_query(block_range: Option<BlockRange>) -> String {
-    let mut query_builder = QueryBuilder::new()
-        .add_query(INIT_WITHDRAW_EVENT_ENTITY)
-        .add_query(CANCEL_WITHDRAW_EVENT_ENTITY);
-    query_builder = query_builder
-        .add_field(INIT_WITHDRAW_EVENT_ENTITY, "id")
-        .add_field(INIT_WITHDRAW_EVENT_ENTITY, "instanceId")
-        .add_field(INIT_WITHDRAW_EVENT_ENTITY, "graphId")
-        .add_field(INIT_WITHDRAW_EVENT_ENTITY, "transactionHash")
-        .add_field(INIT_WITHDRAW_EVENT_ENTITY, "blockNumber")
-        .set_order_by(INIT_WITHDRAW_EVENT_ENTITY, "blockNumber", "asc");
-
-    query_builder = query_builder
-        .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "id")
-        .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "instanceId")
-        .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "graphId")
-        .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "transactionHash")
-        .add_field(CANCEL_WITHDRAW_EVENT_ENTITY, "blockNumber")
-        .set_order_by(CANCEL_WITHDRAW_EVENT_ENTITY, "blockNumber", "asc");
-
-    if let Some(range) = block_range {
-        query_builder = query_builder
-            .add_filter(
-                INIT_WITHDRAW_EVENT_ENTITY,
-                "blockNumber_gte",
-                &range.start_block.to_string(),
-            )
-            .add_filter(INIT_WITHDRAW_EVENT_ENTITY, "blockNumber_lte", &range.end_block.to_string())
-            .add_filter(
-                CANCEL_WITHDRAW_EVENT_ENTITY,
-                "blockNumber_gte",
-                &range.start_block.to_string(),
-            )
-            .add_filter(
-                CANCEL_WITHDRAW_EVENT_ENTITY,
-                "blockNumber_lte",
-                &range.end_block.to_string(),
-            );
+pub fn get_gateway_events_query(
+    event_entities: &[GatewayEventEntity],
+    block_range: Option<BlockRange>,
+) -> String {
+    let mut query_builder = QueryBuilder::new();
+    for entity in event_entities {
+        query_builder = entity.add_single_query(query_builder, block_range.clone());
     }
     query_builder.build()
 }

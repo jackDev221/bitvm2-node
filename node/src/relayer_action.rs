@@ -3,8 +3,8 @@
 use crate::action::{ChallengeSent, CreateInstance, DisproveSent};
 use crate::client::chain::chain_adaptor::WithdrawStatus;
 use crate::client::graph_query::{
-    BlockRange, CANCEL_WITHDRAW_EVENT_ENTITY, CancelWithdrawEvent, INIT_WITHDRAW_EVENT_ENTITY,
-    InitWithdrawEvent, UserGraphWithdrawEvent, get_user_withdraw_events_query,
+    BlockRange, CancelWithdrawEvent, GatewayEventEntity, InitWithdrawEvent, ProceedWithdrawEvent,
+    UserGraphWithdrawEvent, get_gateway_events_query,
 };
 use crate::client::{BTCClient, GOATClient, GraphQueryClient};
 use crate::env::{
@@ -13,7 +13,7 @@ use crate::env::{
 };
 use crate::rpc_service::{P2pUserData, current_time_secs};
 use crate::utils::{
-    finish_withdraw_disproved, obsolete_sibling_graphs, outpoint_spent_txid,
+    create_goat_tx_record, finish_withdraw_disproved, obsolete_sibling_graphs, outpoint_spent_txid,
     strip_hex_prefix_owned, update_graph_fields,
 };
 use crate::{
@@ -37,12 +37,13 @@ use goat::{
     utils::num_blocks_per_network,
 };
 use libp2p::Swarm;
+use std::error::Error;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
 use store::{
-    BridgeInStatus, BridgePath, GraphStatus, GraphTickActionMetaData, MessageState, MessageType,
-    WatchContract, WatchContractStatus,
+    BridgeInStatus, BridgePath, GoatTxProveStatus, GoatTxRecord, GoatTxType, GraphStatus,
+    GraphTickActionMetaData, MessageState, MessageType, WatchContract, WatchContractStatus,
 };
 use tokio::time::sleep;
 use tracing::{info, warn};
@@ -151,34 +152,55 @@ pub async fn get_initialized_graphs(
 pub async fn fetch_and_handle_block_range_events<'a>(
     client: &GraphQueryClient,
     storage_processor: &mut StorageProcessor<'a>,
+    event_entities: &[GatewayEventEntity],
     from_height: i64,
     to_height: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let query_res = client
-        .execute_query(&get_user_withdraw_events_query(Some(BlockRange::new(
-            from_height,
-            to_height,
-        ))))
+        .execute_query(&get_gateway_events_query(
+            event_entities,
+            Some(BlockRange::new(from_height, to_height)),
+        ))
         .await?;
 
-    let init_withdraw_events: Vec<InitWithdrawEvent> =
-        if let Some(init_withdraw_value) = query_res[INIT_WITHDRAW_EVENT_ENTITY].as_array() {
-            serde_json::from_value(serde_json::Value::Array(init_withdraw_value.clone()))?
-        } else {
-            vec![]
-        };
-
-    let cancel_withdraw_events: Vec<CancelWithdrawEvent> =
-        if let Some(cancel_withdraw_value) = query_res[CANCEL_WITHDRAW_EVENT_ENTITY].as_array() {
-            serde_json::from_value(serde_json::Value::Array(cancel_withdraw_value.clone()))?
-        } else {
-            vec![]
-        };
+    let mut init_withdraw_events: Vec<InitWithdrawEvent> = vec![];
+    let mut cancel_withdraw_events = vec![];
+    let mut proceed_withdraw_events: Vec<ProceedWithdrawEvent> = vec![];
+    for event_entity in event_entities {
+        let entity = event_entity.clone();
+        if let Some(value_vec) = query_res[entity.to_string()].as_array() {
+            match entity {
+                GatewayEventEntity::InitWithdraws => {
+                    init_withdraw_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
+                GatewayEventEntity::CancelWithdraws => {
+                    cancel_withdraw_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
+                GatewayEventEntity::ProceedWithdraws => {
+                    proceed_withdraw_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
+            };
+        }
+    }
     info!(
         "get user init withdraw events: {}, cancel withdraw events: {}, block range {from_height}:{to_height}",
         init_withdraw_events.len(),
         cancel_withdraw_events.len()
     );
+    handle_user_withdraw_events(storage_processor, init_withdraw_events, cancel_withdraw_events)
+        .await?;
+    handle_proceed_withdraw_events(storage_processor, proceed_withdraw_events).await?;
+    Ok(())
+}
+
+async fn handle_user_withdraw_events<'a>(
+    storage_processor: &mut StorageProcessor<'a>,
+    init_withdraw_events: Vec<InitWithdrawEvent>,
+    cancel_withdraw_events: Vec<CancelWithdrawEvent>,
+) -> Result<(), Box<dyn Error>> {
     let mut user_withdraw_events: Vec<UserGraphWithdrawEvent> =
         init_withdraw_events.into_iter().map(UserGraphWithdrawEvent::InitWithdraw).collect();
     let mut user_cancel_withdraw_events: Vec<UserGraphWithdrawEvent> =
@@ -201,8 +223,8 @@ pub async fn fetch_and_handle_block_range_events<'a>(
                     })
                     .await?;
             }
-            UserGraphWithdrawEvent::CancelWithdraw(init_event) => {
-                let graph_id = Uuid::from_str(&init_event.graph_id)?;
+            UserGraphWithdrawEvent::CancelWithdraw(cancel_event) => {
+                let graph_id = Uuid::from_str(&strip_hex_prefix_owned(&cancel_event.graph_id))?;
                 storage_processor
                     .update_graph_fields(UpdateGraphParams {
                         graph_id,
@@ -220,10 +242,33 @@ pub async fn fetch_and_handle_block_range_events<'a>(
     Ok(())
 }
 
+async fn handle_proceed_withdraw_events<'a>(
+    storage_processor: &mut StorageProcessor<'a>,
+    proceed_withdraw_events: Vec<ProceedWithdrawEvent>,
+) -> Result<(), Box<dyn Error>> {
+    for event in proceed_withdraw_events {
+        storage_processor
+            .create_or_update_goat_tx_record(&GoatTxRecord {
+                instance_id: Uuid::from_str(&strip_hex_prefix_owned(&event.instance_id))?,
+                graph_id: Uuid::from_str(&strip_hex_prefix_owned(&event.graph_id))?,
+                tx_type: GoatTxType::ProceedWithdraw.to_string(),
+                tx_hash: event.transaction_hash,
+                height: event.block_number.parse::<i64>()?,
+                is_local: false,
+                prove_status: GoatTxProveStatus::Pending.to_string(),
+                extra: Some(event.kickoff_txid),
+                created_at: current_time_secs(),
+            })
+            .await?
+    }
+    Ok(())
+}
+
 pub async fn fetch_history_events(
     local_db: &LocalDB,
     query_client: &GraphQueryClient,
     watch_contract: WatchContract,
+    event_entities: Vec<GatewayEventEntity>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("Start into fetch_history_events from:{}", watch_contract.from_height);
     let goat_client = GOATClient::new(env::goat_config_from_env().await, env::get_goat_network());
@@ -254,6 +299,7 @@ pub async fn fetch_history_events(
             fetch_and_handle_block_range_events(
                 query_client,
                 &mut tx,
+                &event_entities,
                 watch_contract.from_height,
                 to_height,
             )
@@ -302,6 +348,7 @@ pub async fn fetch_history_events(
 pub async fn monitor_events(
     goat_client: &GOATClient,
     local_db: &LocalDB,
+    event_entities: Vec<GatewayEventEntity>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("start tick monitor_events");
     let addr = env::get_goat_gateway_contract_from_env().to_string();
@@ -342,10 +389,15 @@ pub async fn monitor_events(
         let watch_contract_clone = watch_contract.clone();
         let local_db_clone = local_db.clone();
         let query_client_clone = query_client.clone();
+        let event_entities_clone = event_entities.clone();
         tokio::spawn(async move {
-            let _ =
-                fetch_history_events(&local_db_clone, &query_client_clone, watch_contract_clone)
-                    .await;
+            let _ = fetch_history_events(
+                &local_db_clone,
+                &query_client_clone,
+                watch_contract_clone,
+                event_entities_clone,
+            )
+            .await;
         });
         return Ok(());
     }
@@ -359,6 +411,7 @@ pub async fn monitor_events(
     fetch_and_handle_block_range_events(
         &query_client,
         &mut tx,
+        &event_entities,
         watch_contract.from_height,
         to_height,
     )
@@ -532,6 +585,18 @@ pub async fn scan_post_pegin_data(
                         "scan post_pegin_data finish post post_pegin_dataa for instance_id {} , tx hash:{}",
                         instance.instance_id, tx_hash
                     );
+
+                    create_goat_tx_record(
+                        local_db,
+                        goat_client,
+                        Uuid::default(),
+                        instance.instance_id,
+                        &tx_hash,
+                        GoatTxType::PostPeginData,
+                        GoatTxProveStatus::NoNeed.to_string(),
+                    )
+                    .await?;
+
                     storage_process
                         .update_instance_fields(&instance.instance_id, None, None, Some(tx_hash))
                         .await?;
@@ -585,6 +650,18 @@ pub async fn scan_post_operator_data(
                         "scan post_operator_data finish post operate data for instance_id {}, graph_id:{} , tx hash:{}",
                         instance.instance_id, graph.graph_id, tx_hash
                     );
+
+                    create_goat_tx_record(
+                        local_db,
+                        goat_client,
+                        graph.graph_id,
+                        instance.instance_id,
+                        &tx_hash,
+                        GoatTxType::PostOperatorData,
+                        GoatTxProveStatus::NoNeed.to_string(),
+                    )
+                    .await?;
+
                     storage_process
                         .update_graph_fields(UpdateGraphParams {
                             graph_id: graph.graph_id,
@@ -684,6 +761,18 @@ pub async fn scan_kickoff(
                         "instance_id: {}, graph_id:{}  finish withdraw, tx hash :{}",
                         instance_id, graph_id, tx_hash
                     );
+
+                    create_goat_tx_record(
+                        local_db,
+                        goat_client,
+                        graph_id,
+                        instance_id,
+                        &tx_hash,
+                        GoatTxType::ProceedWithdraw,
+                        GoatTxProveStatus::Pending.to_string(),
+                    )
+                    .await?;
+
                     send_message = true;
                 }
                 Err(err) => {
@@ -852,6 +941,17 @@ pub async fn scan_take1(
                             "instance_id: {}, graph_id:{} take1 finish send, tx hash :{}",
                             instance_id, graph_id, tx_hash
                         );
+
+                        create_goat_tx_record(
+                            local_db,
+                            goat_client,
+                            graph_id,
+                            instance_id,
+                            &tx_hash,
+                            GoatTxType::WithdrawHappyPath,
+                            GoatTxProveStatus::NoNeed.to_string(),
+                        )
+                        .await?;
                         update_graph_fields(
                             local_db,
                             graph_id,
@@ -980,6 +1080,16 @@ pub async fn scan_take2(
                             "instance_id: {}, graph_id:{}  finish take2, tx hash :{}",
                             instance_id, graph_id, tx_hash
                         );
+                        create_goat_tx_record(
+                            local_db,
+                            goat_client,
+                            graph_id,
+                            instance_id,
+                            &tx_hash,
+                            GoatTxType::WithdrawUnhappyPath,
+                            GoatTxProveStatus::NoNeed.to_string(),
+                        )
+                        .await?;
                         update_graph_fields(
                             local_db,
                             graph_data.graph_id,
@@ -1007,11 +1117,22 @@ pub async fn scan_take2(
                     None,
                 )
                 .await?;
-                finish_withdraw_disproved(
+                let tx_hash = finish_withdraw_disproved(
                     btc_client,
                     goat_client,
                     &graph_id,
                     &btc_client.fetch_btc_tx(&disprove_txid).await?,
+                )
+                .await?;
+
+                create_goat_tx_record(
+                    local_db,
+                    goat_client,
+                    graph_id,
+                    instance_id,
+                    &tx_hash,
+                    GoatTxType::WithdrawDisproved,
+                    GoatTxProveStatus::NoNeed.to_string(),
                 )
                 .await?;
                 // in case challenger never broadcast DisproveSent

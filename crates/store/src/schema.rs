@@ -491,6 +491,8 @@ pub struct ProofWithPis {
     pub graph_id: Option<Uuid>,
     pub proof: String,
     pub pis: String,
+    pub goat_block_number: i64,
+    pub proof_cast: i64,
     pub created_at: i64,
 }
 
@@ -581,4 +583,81 @@ pub struct WatchContract {
     pub status: String,
     pub extra: Option<String>,
     pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum GoatTxType {
+    #[default]
+    Normal,
+    PostPeginData,
+    PostOperatorData,
+    InitWithdraw,
+    CancelWithdraw,
+    ProceedWithdraw,
+    WithdrawHappyPath,
+    WithdrawUnhappyPath,
+    WithdrawDisproved,
+}
+
+impl FromStr for GoatTxType {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Normal" => Ok(GoatTxType::Normal),
+            "PostPeginData" => Ok(GoatTxType::PostPeginData),
+            "PostOperatorData" => Ok(GoatTxType::PostOperatorData),
+            "InitWithdraw" => Ok(GoatTxType::InitWithdraw),
+            "CancelWithdraw" => Ok(GoatTxType::CancelWithdraw),
+            "ProceedWithdraw" => Ok(GoatTxType::ProceedWithdraw),
+            "WithdrawHappyPath" => Ok(GoatTxType::WithdrawHappyPath),
+            "WithdrawUnhappyPath" => Ok(GoatTxType::WithdrawUnhappyPath),
+            "WithdrawDisproved" => Ok(GoatTxType::WithdrawDisproved),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for GoatTxType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum GoatTxProveStatus {
+    #[default]
+    NoNeed,
+    Pending,
+    Proved,
+}
+
+impl FromStr for GoatTxProveStatus {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "NoNeed" => Ok(GoatTxProveStatus::NoNeed),
+            "Pending" => Ok(GoatTxProveStatus::Pending),
+            "Proved" => Ok(GoatTxProveStatus::Proved),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for GoatTxProveStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+#[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
+pub struct GoatTxRecord {
+    pub instance_id: Uuid,
+    pub graph_id: Uuid,
+    pub tx_type: String,
+    pub tx_hash: String,
+    pub height: i64,
+    pub is_local: bool,
+    pub prove_status: String,
+    pub extra: Option<String>,
+    pub created_at: i64,
 }

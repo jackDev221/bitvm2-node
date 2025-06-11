@@ -21,9 +21,9 @@ use libp2p::gossipsub::MessageId;
 use libp2p::{PeerId, Swarm, gossipsub};
 use musig2::{AggNonce, PartialSignature, PubNonce, SecNonce};
 use serde::{Deserialize, Serialize};
-use store::GraphStatus;
 use store::ipfs::IPFS;
 use store::localdb::LocalDB;
+use store::{GoatTxProveStatus, GoatTxType, GraphStatus};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1083,11 +1083,21 @@ pub async fn recv_and_dispatch(
                 get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
             let take1_txid = graph.take1.tx().compute_txid();
             if tx_on_chain(btc_client, &take1_txid).await? {
-                finish_withdraw_happy_path(
+                let tx_hash = finish_withdraw_happy_path(
                     btc_client,
                     goat_client,
                     &receive_data.graph_id,
                     graph.take1.tx(),
+                )
+                .await?;
+                create_goat_tx_record(
+                    local_db,
+                    goat_client,
+                    receive_data.graph_id,
+                    receive_data.instance_id,
+                    &tx_hash,
+                    GoatTxType::WithdrawHappyPath,
+                    GoatTxProveStatus::NoNeed.to_string(),
                 )
                 .await?;
                 update_graph_fields(
@@ -1109,11 +1119,21 @@ pub async fn recv_and_dispatch(
             let graph =
                 get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
             if tx_on_chain(btc_client, &graph.take2.tx().compute_txid()).await? {
-                finish_withdraw_unhappy_path(
+                let tx_hash = finish_withdraw_unhappy_path(
                     btc_client,
                     goat_client,
                     &receive_data.graph_id,
                     graph.take2.tx(),
+                )
+                .await?;
+                create_goat_tx_record(
+                    local_db,
+                    goat_client,
+                    receive_data.graph_id,
+                    receive_data.instance_id,
+                    &tx_hash,
+                    GoatTxType::WithdrawUnhappyPath,
+                    GoatTxProveStatus::NoNeed.to_string(),
                 )
                 .await?;
                 update_graph_fields(
@@ -1151,11 +1171,21 @@ pub async fn recv_and_dispatch(
                     None,
                 )
                 .await?;
-                finish_withdraw_disproved(
+                let tx_hash = finish_withdraw_disproved(
                     btc_client,
                     goat_client,
                     &receive_data.graph_id,
                     &btc_client.fetch_btc_tx(&receive_data.disprove_txid).await?,
+                )
+                .await?;
+                create_goat_tx_record(
+                    local_db,
+                    goat_client,
+                    receive_data.graph_id,
+                    receive_data.instance_id,
+                    &tx_hash,
+                    GoatTxType::WithdrawDisproved,
+                    GoatTxProveStatus::NoNeed.to_string(),
                 )
                 .await?;
                 update_graph_fields(

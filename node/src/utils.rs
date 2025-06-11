@@ -3,9 +3,12 @@ use crate::client::chain::chain_adaptor::WithdrawStatus;
 use crate::client::chain::utils::{
     get_graph_ids_by_instance_id, validate_committee, validate_operator, validate_relayer,
 };
+use crate::client::graph_query::GatewayEventEntity;
 use crate::client::{BTCClient, GOATClient};
+use crate::env;
 use crate::env::*;
 use crate::middleware::AllBehaviours;
+use crate::relayer_action::monitor_events;
 use crate::rpc_service::current_time_secs;
 use alloy::providers::ProviderBuilder;
 use ark_serialize::CanonicalDeserialize;
@@ -47,10 +50,13 @@ use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
-use store::{BridgeInStatus, Graph, GraphStatus, Node};
+use store::{
+    BridgeInStatus, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus, Node,
+    ProofWithPis,
+};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -699,9 +705,15 @@ pub async fn get_groth16_proof(
     let (proof, pis) = {
         // query proof from database.
         let mut db_lock = local_db.acquire().await?;
-        let (proof, pis) = db_lock.get_proof_with_pis(instance_id, graph_id).await?;
-        let proof_bytes = hex::decode(proof)?;
-        let pis_bytes = hex::decode(pis)?;
+        let proof_with_pis = db_lock.get_proof_with_pis(instance_id, graph_id).await?;
+        if proof_with_pis.is_none() {
+            return Err(
+                format!("instance_id:{instance_id}, graph_id:{graph_id} not find proof!").into()
+            );
+        }
+        let proof_with_pis = proof_with_pis.unwrap();
+        let proof_bytes = hex::decode(proof_with_pis.proof)?;
+        let pis_bytes = hex::decode(proof_with_pis.pis)?;
         (proof_bytes, pis_bytes)
     };
     let proof: ark_groth16::Proof<ark_bn254::Bn254> =
@@ -908,6 +920,36 @@ pub async fn update_graph_fields(
             init_withdraw_txid: None,
         })
         .await?)
+}
+
+pub async fn create_goat_tx_record(
+    local_db: &LocalDB,
+    goat_client: &GOATClient,
+    graph_id: Uuid,
+    instance_id: Uuid,
+    tx_hash: &str,
+    tx_type: GoatTxType,
+    prove_status: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(receipt) = goat_client.get_tx_receipt(tx_hash).await?
+        && receipt.block_number.is_some()
+    {
+        let mut storage_process = local_db.acquire().await?;
+        storage_process
+            .create_or_update_goat_tx_record(&GoatTxRecord {
+                instance_id,
+                graph_id,
+                tx_type: tx_type.to_string(),
+                tx_hash: tx_hash.to_string(),
+                height: receipt.block_number.unwrap() as i64,
+                is_local: true,
+                extra: None,
+                prove_status,
+                created_at: current_time_secs(),
+            })
+            .await?;
+    }
+    Ok(())
 }
 pub async fn store_graph(
     local_db: &LocalDB,
@@ -1363,4 +1405,101 @@ pub async fn obsolete_sibling_graphs(
         }
     }
     Ok(())
+}
+
+pub async fn run_watch_event_task(
+    actor: Actor,
+    local_db: LocalDB,
+    interval: u64,
+) -> anyhow::Result<String> {
+    let goat_client = GOATClient::new(env::goat_config_from_env().await, env::get_goat_network());
+    loop {
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+        if actor == Actor::Relayer {
+            match monitor_events(
+                &goat_client,
+                &local_db,
+                vec![GatewayEventEntity::InitWithdraws, GatewayEventEntity::CancelWithdraws],
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!(e)
+                }
+            }
+        }
+        if actor == Actor::Operator {
+            match monitor_events(
+                &goat_client,
+                &local_db,
+                vec![GatewayEventEntity::ProceedWithdraws],
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!(e)
+                }
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub async fn run_gen_groth16_proof_task(
+    local_db: LocalDB,
+    interval: u64,
+) -> anyhow::Result<String> {
+    let local_operator = get_local_node_info().btc_pub_key;
+    let local_db = &local_db;
+    loop {
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+        let tx_records = {
+            let mut storage_processor = local_db.acquire().await?;
+            storage_processor
+                .get_goat_tx_record_need_proving(&GoatTxType::ProceedWithdraw.to_string())
+                .await?
+        };
+
+        for record in tx_records {
+            let mut tx = local_db.start_transaction().await?;
+            let operator = tx.get_graph_operator(&record.graph_id).await?;
+            if operator.is_none() || operator.unwrap() != local_operator {
+                tx.update_goat_tx_record_prove_status(
+                    &record.graph_id,
+                    &record.instance_id,
+                    &record.tx_type,
+                    &GoatTxProveStatus::NoNeed.to_string(),
+                )
+                .await?;
+                tx.commit().await?;
+                continue;
+            }
+
+            // TODO
+            let proof = "".to_string();
+            let pis = "".to_string();
+            let cast = 0;
+
+            tx.create_or_update_proof_with_pis(ProofWithPis {
+                instance_id: record.graph_id,
+                graph_id: Some(record.graph_id),
+                proof,
+                pis,
+                goat_block_number: record.height,
+                proof_cast: 0,
+                created_at: current_time_secs() - cast,
+            })
+            .await?;
+            tx.update_goat_tx_record_prove_status(
+                &record.graph_id,
+                &record.instance_id,
+                &record.tx_type,
+                &GoatTxProveStatus::Proved.to_string(),
+            )
+            .await?;
+            tx.commit().await?;
+        }
+    }
 }
