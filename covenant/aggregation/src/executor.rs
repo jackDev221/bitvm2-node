@@ -11,6 +11,7 @@ use zkm_sdk::{
     ExecutionReport, HashableKey, Prover, ZKMProof, ZKMProofKind, ZKMProofWithPublicValues,
     ZKMProvingKey, ZKMPublicValues, ZKMStdin, ZKMVerifyingKey,
 };
+use zkm_verifier::{Groth16Verifier, GROTH16_VK_BYTES};
 
 use crate::db::*;
 
@@ -21,6 +22,7 @@ pub struct ProofWithPublicValues {
     pub block_number: u64,
     pub proof: ZKMProof,
     pub public_values: ZKMPublicValues,
+    pub zkm_version: String,
 }
 
 #[derive(Clone)]
@@ -76,6 +78,7 @@ impl AggregationExecutor {
                                 proof: agg_proof.proof,
                                 public_values: agg_proof.public_values,
                                 vk: self.vk.clone(),
+                                zkm_version: agg_proof.zkm_version,
                             }
                         };
                         AggreationInput((pre_agg_proof, block_proof))
@@ -120,6 +123,7 @@ impl AggregationExecutor {
                             block_number,
                             proof: agg_proof.proof.clone(),
                             public_values: agg_proof.public_values.clone(),
+                            zkm_version: agg_proof.zkm_version.clone(),
                         })?;
 
                         groth16_proof_tx.send((
@@ -127,6 +131,7 @@ impl AggregationExecutor {
                                 block_number,
                                 proof: agg_proof.proof,
                                 public_values: agg_proof.public_values,
+                                zkm_version: agg_proof.zkm_version,
                             },
                             self.vk.clone(),
                         ))?;
@@ -148,6 +153,18 @@ impl AggregationExecutor {
         &self,
         inputs: Vec<Proof>,
     ) -> Result<(ZKMProofWithPublicValues, ExecutionReport, Duration)> {
+        inputs.iter().for_each(|input| {
+            assert_eq!(
+                input.zkm_version,
+                self.client.version(),
+                "{}",
+                format!(
+                    "zkMIPS version mismatch, expected {}, got {}",
+                    self.client.version(), input.zkm_version,
+                ),
+            );
+        });
+
         let mut stdin = ZKMStdin::new();
 
         // Write the block numbers.
@@ -253,6 +270,13 @@ impl Groth16Executor {
                                 proving_duration,
                             )
                             .await?;
+
+                        Groth16Verifier::verify(
+                            &groth16_proof.bytes(),
+                            &groth16_proof.public_values.to_vec(),
+                            &self.vk.bytes32(),
+                            &GROTH16_VK_BYTES,
+                        ).expect("Groth16 proof is invalid");
                     }
                     Err(err) => {
                         error!("Error generate groth16 proof {}: {}", block_number, err);
@@ -272,6 +296,17 @@ impl Groth16Executor {
         agg_proof: ProofWithPublicValues,
         agg_vk: Arc<ZKMVerifyingKey>,
     ) -> Result<(ZKMProofWithPublicValues, ExecutionReport, Duration)> {
+        assert_eq!(
+            agg_proof.zkm_version,
+            self.client.version(),
+            "{}",
+            format!(
+                "zkMIPS version mismatch, expected {}, got {}",
+                self.client.version(),
+                agg_proof.zkm_version
+            ),
+        );
+
         let mut stdin = ZKMStdin::new();
 
         // Write the block number.

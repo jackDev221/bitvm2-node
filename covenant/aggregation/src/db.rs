@@ -22,6 +22,7 @@ pub struct Proof {
     pub proof: ZKMProof,
     pub public_values: ZKMPublicValues,
     pub vk: Arc<ZKMVerifyingKey>,
+    pub zkm_version: String,
 }
 
 pub struct Db {
@@ -47,7 +48,7 @@ impl Db {
         let mut storage_process = self.db.acquire().await?;
 
         loop {
-            let (proof, public_values, vk_id) = if is_aggregate {
+            let (proof, public_values, vk_id, zkm_version) = if is_aggregate {
                 storage_process.get_aggregation_proof(block_number as i64).await?
             } else {
                 storage_process.get_block_proof(block_number as i64).await?
@@ -72,7 +73,7 @@ impl Db {
             }
             let vk: ZKMVerifyingKey = bincode::deserialize(&vk)?;
 
-            return Ok(Proof { block_number, proof, public_values, vk: Arc::new(vk) });
+            return Ok(Proof { block_number, proof, public_values, vk: Arc::new(vk), zkm_version });
         }
     }
 
@@ -97,12 +98,13 @@ impl Db {
                 &proof_bytes,
                 &public_values_bytes,
                 vk.bytes32(),
+                &proof.zkm_version,
                 ProvableBlockStatus::Proved.to_string(),
             )
             .await?;
 
         let vk_bytes = bincode::serialize(vk).unwrap();
-        storage_process.create_verifier_key(vk.bytes32(), vk_bytes.as_ref()).await?;
+        storage_process.create_verifier_key(vk.bytes32().as_ref(), vk_bytes.as_ref()).await?;
 
         self.remove_old_proofs(block_number).await?;
 
@@ -157,6 +159,8 @@ impl Db {
         execution_report: &ExecutionReport,
         proving_duration: Duration,
     ) -> Result<()> {
+        assert_eq!(proof.zkm_version, ZKM_CIRCUIT_VERSION);
+
         let proof_bytes = bincode::serialize(&proof.proof).unwrap();
         let public_values_bytes = bincode::serialize(&proof.public_values).unwrap();
 
@@ -176,11 +180,9 @@ impl Db {
             .await?;
 
         let vk_bytes = bincode::serialize(vk).unwrap();
-        storage_process.create_verifier_key(vk.bytes32(), vk_bytes.as_ref()).await?;
+        storage_process.create_verifier_key(vk.bytes32().as_ref(), vk_bytes.as_ref()).await?;
 
-        storage_process
-            .create_verifier_key(ZKM_CIRCUIT_VERSION.to_owned(), GROTH16_VK_BYTES.as_ref())
-            .await?;
+        storage_process.create_verifier_key(ZKM_CIRCUIT_VERSION, GROTH16_VK_BYTES.as_ref()).await?;
 
         Ok(())
     }
