@@ -2,10 +2,12 @@ mod bitvm2;
 
 mod handler;
 mod node;
+mod proof;
 
 use crate::client::BTCClient;
 use crate::env::get_network;
 use crate::metrics_service::{MetricsState, metrics_handler, metrics_middleware};
+use crate::rpc_service::handler::proof_handler::get_proofs;
 use crate::rpc_service::handler::{bitvm2_handler::*, node_handler::*};
 use axum::body::Body;
 use axum::extract::Request;
@@ -90,6 +92,7 @@ pub async fn serve(
         .route("/v1/graphs/presign_check", get(graph_presign_check))
         .route("/v1/graphs/{id}/txn", get(get_graph_txn))
         .route("/v1/graphs/{id}/tx", get(get_graph_tx))
+        .route("/v1/proofs", get(get_proofs))
         .route("/metrics", get(metrics_handler))
         .layer(middleware::from_fn(print_req_and_resp_detail))
         .layer(CorsLayer::new().allow_headers(Any).allow_origin(Any).allow_methods(vec![
@@ -224,7 +227,8 @@ mod tests {
                 "peer_id": peer_id,
                 "actor": "Challenger",
                 "btc_pub_key": pub_key,
-                "goat_addr": goat_addr
+                "goat_addr": goat_addr,
+                "socket_addr":"127.0.0.1:8080"
             }))
             .send()
             .await?;
@@ -350,6 +354,7 @@ mod tests {
                     "bridge_out_start_at":1000000,
                     "bridge_out_to_addr": "",
                     "bridge_out_from_addr":"",
+                    "zkm_version":"v1.1.0",
                     "operator": hex::encode(generate_random_bytes(33))
                 }
             }))

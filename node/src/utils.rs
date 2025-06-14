@@ -48,6 +48,7 @@ use secp256k1::Secp256k1;
 use statics::*;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Write};
+use std::net::SocketAddr;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -57,6 +58,7 @@ use store::{
     BridgeInStatus, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus, Node,
     ProofWithPis,
 };
+use stun_client::{Attribute, Class, Client};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -242,7 +244,9 @@ pub async fn select_operator_inputs(
 
 /// Loads partial scripts from a local cache file.
 /// If cache file does not exist, generate partial scripts by vk an cache it
-pub fn get_partial_scripts() -> Result<Vec<Script>, Box<dyn std::error::Error>> {
+pub async fn get_partial_scripts(
+    local_db: &LocalDB,
+) -> Result<Vec<Script>, Box<dyn std::error::Error>> {
     let scripts_cache_path = SCRIPT_CACHE_FILE_NAME;
     if Path::new(scripts_cache_path).exists() {
         let file = File::open(scripts_cache_path)?;
@@ -250,7 +254,7 @@ pub fn get_partial_scripts() -> Result<Vec<Script>, Box<dyn std::error::Error>> 
         let scripts_bytes: Vec<ScriptBuf> = bincode::deserialize_from(reader)?;
         Ok(scripts_bytes.into_iter().map(|x| script! {}.push_script(x)).collect())
     } else {
-        let partial_scripts = generate_partial_scripts(&get_vk()?);
+        let partial_scripts = generate_partial_scripts(&get_vk(local_db).await?);
         if let Some(parent) = Path::new(scripts_cache_path).parent() {
             fs::create_dir_all(parent)?;
         };
@@ -672,6 +676,7 @@ pub async fn validate_disprove(
 /// - `Ok(Some((index, disprove_script)))` if invalid, providing the witness info for later disprove.
 ///
 pub async fn validate_assert(
+    local_db: &LocalDB,
     btc_client: &BTCClient,
     assert_commit_txns: &[Txid; COMMIT_TX_NUM],
     wots_pubkeys: WotsPublicKeys,
@@ -687,10 +692,11 @@ pub async fn validate_assert(
     let assert_commit_txns: [Transaction; COMMIT_TX_NUM] =
         txs.try_into().map_err(|_| "assert-commit-tx num mismatch")?;
     let proof_sigs = extract_proof_sigs_from_assert_commit_txns(assert_commit_txns)?;
-    let disprove_scripts = generate_disprove_scripts(&get_partial_scripts()?, &wots_pubkeys);
+    let disprove_scripts =
+        generate_disprove_scripts(&get_partial_scripts(local_db).await?, &wots_pubkeys);
     let disprove_scripts: [Script; NUM_TAPS] =
         disprove_scripts.try_into().map_err(|_| "disprove script num mismatch")?;
-    Ok(verify_proof(&get_vk()?, proof_sigs, &disprove_scripts, &wots_pubkeys))
+    Ok(verify_proof(&get_vk(local_db).await?, proof_sigs, &disprove_scripts, &wots_pubkeys))
 }
 
 /// Retrieves the Groth16 proof, public inputs, and verifying key
@@ -702,26 +708,52 @@ pub async fn get_groth16_proof(
     instance_id: &Uuid,
     graph_id: &Uuid,
 ) -> Result<(Groth16Proof, PublicInputs, VerifyingKey), Box<dyn std::error::Error>> {
-    let (proof, pis) = {
-        // query proof from database.
-        let mut db_lock = local_db.acquire().await?;
-        let proof_with_pis = db_lock.get_proof_with_pis(instance_id, graph_id).await?;
-        if proof_with_pis.is_none() {
-            return Err(
-                format!("instance_id:{instance_id}, graph_id:{graph_id} not find proof!").into()
-            );
-        }
-        let proof_with_pis = proof_with_pis.unwrap();
-        let proof_bytes = hex::decode(proof_with_pis.proof)?;
-        let pis_bytes = hex::decode(proof_with_pis.pis)?;
-        (proof_bytes, pis_bytes)
-    };
+    if cfg!(all(feature = "tests", feature = "e2e-tests")) {
+        return get_test_groth16_proof();
+    }
+    let mut db_lock = local_db.acquire().await?;
+    let tx_record_op = db_lock
+        .get_graph_goat_tx_record(graph_id, &GoatTxType::ProceedWithdraw.to_string())
+        .await?;
+    if tx_record_op.is_none() {
+        return Err(
+            format!("instance_id:{instance_id}, graph_id:{graph_id} not find goat tx!").into()
+        );
+    }
+    let (proof, pis, vk, version) =
+        groth16::get_groth16_proof(local_db, tx_record_op.unwrap().height as u64).await?;
+
+    tracing::info!(
+        "instance_id:{instance_id}, graph_id:{graph_id} finish get groth16 proof at version: {version}"
+    );
+    Ok((proof, pis, vk))
+}
+pub async fn get_vk(db: &LocalDB) -> Result<VerifyingKey, Box<dyn std::error::Error>> {
+    if cfg!(all(feature = "tests", feature = "e2e-tests")) {
+        return get_test_vk();
+    }
+
+    Ok(groth16::get_groth16_vk(db, &groth16::get_zkm_version().await).await?)
+}
+
+pub fn get_test_groth16_proof()
+-> Result<(Groth16Proof, PublicInputs, VerifyingKey), Box<dyn std::error::Error>> {
+    let proof = hex::decode(
+        "a232396203abfa6c31ce497e1923b29423db625a7ab110\
+        5be9d7de0c48b835023ea6324462abdada97b185df813572ecb5d7df5b66e1347a7ace247ad526baaaebd2b3dd7a2\
+        54a264f001a5e3b922efc4699ec7ec2a9119064da761663e2842818f8e8c5c3dcfe3424f812a7a7ce6c1d78bc124e\
+        560879d990b97a3a0c222c06e950b1b70508964af18d419623620f9689fe84a7e4683f850bd1274f8ab95814f2664\
+        549f3581d5b7f9d52c0345f8f31e353131a6c3fe8d5a940dd9fd6dcf6ae232b8f50a88e1d67b33aeb21a3c6ffbc140\
+        35b2f9e7ae2c9af8a1218b2db4e0c600a028523e695ebce01b1d3f5a84a3e1973462a26835c6767b0d4dfb1f25e0e",
+    )?;
+    let pis = hex::decode("e8ffffef93f5e1439170b97948e833285d588181b64550b829a031e1724e6430")?;
     let proof: ark_groth16::Proof<ark_bn254::Bn254> =
         ark_groth16::Proof::deserialize_uncompressed(&proof[..])?;
     let scalar: ark_bn254::Fr = ark_bn254::Fr::deserialize_uncompressed(&pis[..])?;
-    Ok((proof, vec![scalar], get_vk()?))
+    Ok((proof, vec![scalar], get_test_vk()?))
 }
-pub fn get_vk() -> Result<VerifyingKey, Box<dyn std::error::Error>> {
+
+pub fn get_test_vk() -> Result<VerifyingKey, Box<dyn std::error::Error>> {
     let zkm_v1_vk_bytes = [
         115, 158, 251, 51, 106, 255, 102, 248, 22, 171, 229, 158, 80, 192, 240, 217, 99, 162, 65,
         107, 31, 137, 197, 79, 11, 210, 74, 65, 65, 203, 243, 14, 123, 2, 229, 125, 198, 247, 76,
@@ -981,6 +1013,7 @@ pub async fn store_graph(
                 node_p2wsh_address(network, &graph.parameters.operator_pubkey).to_string();
         }
     }
+
     transaction
         .update_graph(Graph {
             graph_id,
@@ -1006,6 +1039,7 @@ pub async fn store_graph(
             bridge_out_from_addr,
             bridge_out_to_addr,
             init_withdraw_txid: None,
+            zkm_version: groth16::get_zkm_version().await,
             created_at: current_time_secs(),
             updated_at: current_time_secs(),
         })
@@ -1292,6 +1326,7 @@ pub async fn save_node_info(
             actor: node_info.actor.clone(),
             goat_addr: node_info.goat_addr.clone(),
             btc_pub_key: node_info.btc_pub_key.clone(),
+            socket_addr: node_info.socket_addr.clone(),
             updated_at: current_time,
             created_at: current_time,
         })
@@ -1342,7 +1377,7 @@ pub async fn validate_actor(
     role: Actor,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let rpc_url = get_goat_url_from_env();
-    let provider = ProviderBuilder::new().on_http(rpc_url);
+    let provider = ProviderBuilder::new().connect_http(rpc_url);
     let goat_gateway_contract_address = get_goat_gateway_contract_from_env();
     match role {
         Actor::Committee => {
@@ -1383,7 +1418,7 @@ pub async fn obsolete_sibling_graphs(
     reimbursed_graph_id: Uuid,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rpc_url = get_goat_url_from_env();
-    let provider = ProviderBuilder::new().on_http(rpc_url);
+    let provider = ProviderBuilder::new().connect_http(rpc_url);
     let goat_gateway_contract_address = get_goat_gateway_contract_from_env();
     let all_graphs =
         get_graph_ids_by_instance_id(&provider, goat_gateway_contract_address, instance_id).await?;
@@ -1502,4 +1537,33 @@ pub async fn run_gen_groth16_proof_task(
             tx.commit().await?;
         }
     }
+}
+
+/// Retrieve the server's public IP via NAT protocol and combine it with
+/// the configured RPC monitoring port`rpc_addr` to generate the external RPC service address.
+pub async fn set_node_external_socket_addr_env(rpc_addr: &str) -> anyhow::Result<()> {
+    let addr = SocketAddr::from_str(rpc_addr)?;
+    let mut client = Client::new("0.0.0.0:0", None).await?;
+    let message_res = client.binding_request("stun.l.google.com:19302", None).await;
+    if message_res.is_err() {
+        warn!("fail to get message from stun.l.google.com:19302, err :{:?}", message_res.err());
+        return Ok(());
+    }
+    let message = message_res?;
+    if message.get_class() != Class::SuccessResponse {
+        warn!(
+            "fail to get message from stun.l.google.com:19302, return class :{:?}",
+            message.get_class()
+        );
+        return Ok(());
+    }
+    if let Some(socket_addr) = Attribute::get_xor_mapped_address(&message) {
+        unsafe {
+            std::env::set_var(
+                ENV_EXTERNAL_SOCKET_ADDR,
+                SocketAddr::new(socket_addr.ip(), addr.port()).to_string(),
+            );
+        }
+    }
+    Ok(())
 }

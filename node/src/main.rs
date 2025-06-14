@@ -26,7 +26,10 @@ use bitvm2_noded::middleware::{
     self, AllBehaviours, behaviour::AllBehavioursEvent, split_topic_name,
 };
 use bitvm2_noded::rpc_service;
-use bitvm2_noded::utils::{self, detect_heart_beat, run_watch_event_task, save_local_info};
+use bitvm2_noded::utils::{
+    self, detect_heart_beat, run_watch_event_task, save_local_info,
+    set_node_external_socket_addr_env,
+};
 
 use anyhow::Result;
 use futures::future;
@@ -224,6 +227,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let ipfs = IPFS::new(&ipfs_url);
 
     // validate node info
+    set_node_external_socket_addr_env(&rpc_addr).await?;
     check_node_info().await;
     save_local_info(&local_db).await;
 

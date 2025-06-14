@@ -2,7 +2,7 @@ use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
     COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, GrapFullData, Graph, GraphTickActionMetaData, Instance,
-    Message, MessageBroadcast, Node, NodesOverview, NonceCollect, NonceCollectMetaData,
+    Message, MessageBroadcast, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofType,
     ProofWithPis, PubKeyCollect, PubKeyCollectMetaData, WatchContract,
 };
 
@@ -247,8 +247,8 @@ impl<'a> StorageProcessor<'a> {
             "INSERT OR REPLACE INTO  graph (graph_id, instance_id, graph_ipfs_base_url, pegin_txid, \
              amount, status, pre_kickoff_txid, kickoff_txid, challenge_txid, take1_txid, assert_init_txid, assert_commit_txids, \
             assert_final_txid, take2_txid, disprove_txid, operator, raw_data,  bridge_out_start_at, bridge_out_from_addr,  \
-            bridge_out_to_addr, init_withdraw_txid, created_at, updated_at)  \
-            VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ",
+            bridge_out_to_addr, init_withdraw_txid, zkm_version,  created_at, updated_at)  \
+            VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ",
             graph.graph_id,
             graph.instance_id,
             graph.graph_ipfs_base_url,
@@ -270,6 +270,7 @@ impl<'a> StorageProcessor<'a> {
             graph.bridge_out_from_addr,
             graph.bridge_out_to_addr,
             graph.init_withdraw_txid,
+            graph.zkm_version,
             graph.created_at,
             graph.updated_at,
         ).execute(self.conn())
@@ -384,7 +385,7 @@ impl<'a> StorageProcessor<'a> {
             "SELECT  graph_id as \"graph_id:Uuid \", instance_id  as \"instance_id:Uuid \", graph_ipfs_base_url, \
              pre_kickoff_txid, pegin_txid, amount, status, kickoff_txid, challenge_txid, take1_txid, assert_init_txid, assert_commit_txids, \
               assert_final_txid, take2_txid, disprove_txid, operator, raw_data,bridge_out_start_at,  bridge_out_from_addr, bridge_out_to_addr,\
-              init_withdraw_txid, created_at, updated_at  FROM graph WHERE  graph_id = ?",
+              init_withdraw_txid, zkm_version, created_at, updated_at  FROM graph WHERE  graph_id = ?",
             graph_id
         ).fetch_optional(self.conn()).await?;
         Ok(res)
@@ -427,12 +428,12 @@ impl<'a> StorageProcessor<'a> {
         if let Some(from_addr) = params.from_addr {
             let node_op = sqlx::query_as!(
                 Node,
-                "SELECT peer_id, actor, goat_addr, btc_pub_key, created_at, updated_at  \
+                "SELECT peer_id, actor, goat_addr, btc_pub_key,  socket_addr, created_at, updated_at  \
                     FROM node WHERE goat_addr =?",
                 from_addr
             )
-            .fetch_optional(self.conn())
-            .await?;
+                .fetch_optional(self.conn())
+                .await?;
             if node_op.is_none() {
                 warn!("no node find refer to goat address:{from_addr}");
                 return Ok((vec![], 0));
@@ -508,7 +509,7 @@ impl<'a> StorageProcessor<'a> {
             "SELECT  graph_id as \"graph_id:Uuid \" , instance_id as \"instance_id:Uuid \", graph_ipfs_base_url, \
             pre_kickoff_txid,pegin_txid, amount, status,kickoff_txid, challenge_txid, take1_txid, assert_init_txid, assert_commit_txids, \
              assert_final_txid, take2_txid, disprove_txid, operator, raw_data, bridge_out_start_at,  bridge_out_from_addr, bridge_out_to_addr, \
-            init_withdraw_txid, created_at, updated_at FROM graph WHERE instance_id = ?",
+            init_withdraw_txid, zkm_version, created_at, updated_at FROM graph WHERE instance_id = ?",
             instance_id
         ).fetch_all(self.conn()).await?;
         Ok(res)
@@ -521,7 +522,7 @@ impl<'a> StorageProcessor<'a> {
     ) -> anyhow::Result<()> {
         let node_op = sqlx::query_as!(
             Node,
-            "SELECT peer_id, actor, goat_addr, btc_pub_key, created_at, updated_at  \
+            "SELECT peer_id, actor, goat_addr, btc_pub_key, socket_addr, created_at, updated_at  \
             FROM node WHERE peer_id = ?",
             peer_id
         )
@@ -542,11 +543,12 @@ impl<'a> StorageProcessor<'a> {
     /// Insert or update node
     pub async fn update_node(&mut self, node: Node) -> anyhow::Result<u64> {
         let res = sqlx::query!(
-            "INSERT OR REPLACE INTO  node (peer_id, actor, goat_addr, btc_pub_key, created_at, updated_at) VALUES ( ?, ?, ?, ?, ?, ?) ",
+            "INSERT OR REPLACE INTO  node (peer_id, actor, goat_addr, btc_pub_key, socket_addr, created_at, updated_at) VALUES ( ?, ?, ?, ?, ?, ?, ?) ",
             node.peer_id,
             node.actor,
             node.goat_addr,
             node.btc_pub_key,
+            node.socket_addr,
             node.created_at,
             node.updated_at,
         )
@@ -561,7 +563,7 @@ impl<'a> StorageProcessor<'a> {
     ) -> anyhow::Result<Option<Node>> {
         Ok(sqlx::query_as!(
             Node,
-            "SELECT peer_id, actor, goat_addr, btc_pub_key, created_at, updated_at FROM node WHERE btc_pub_key = ?",
+            "SELECT peer_id, actor, goat_addr, btc_pub_key, socket_addr, created_at, updated_at FROM node WHERE btc_pub_key = ?",
             btc_pub_key
         ).fetch_optional(self.conn()).await?)
     }
@@ -649,7 +651,7 @@ impl<'a> StorageProcessor<'a> {
     pub async fn node_by_id(&mut self, peer_id: &str) -> anyhow::Result<Option<Node>> {
         let res = sqlx::query_as!(
             Node,
-            "SELECT peer_id, actor, goat_addr,btc_pub_key, created_at,  updated_at FROM  node WHERE peer_id = ?",
+            "SELECT peer_id, actor, goat_addr,btc_pub_key, socket_addr, created_at,  updated_at FROM  node WHERE peer_id = ?",
             peer_id
         ).fetch_optional(self.conn()).await?;
         Ok(res)
@@ -1236,7 +1238,6 @@ impl<'a> StorageProcessor<'a> {
             }
         }
     }
-
     pub async fn create_aggregation_task(
         &mut self,
         block_number: i64,
@@ -1737,19 +1738,17 @@ impl<'a> StorageProcessor<'a> {
     pub async fn get_graph_goat_tx_record(
         &mut self,
         graph_id: &Uuid,
-        instance_id: &Uuid,
         tx_type: &str,
     ) -> anyhow::Result<Option<GoatTxRecord>> {
         Ok(
             sqlx::query_as!(
                 GoatTxRecord,
                 "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, tx_hash, \
-                 height, is_local, prove_status, extra, created_at From goat_tx_record where instance_id = ? AND graph_id = ? AND tx_type = ?",
-                instance_id,
+                 height, is_local, prove_status, extra, created_at From goat_tx_record where  graph_id = ? AND tx_type = ?",
                 graph_id,
                 tx_type
             ).fetch_optional(self.conn())
-            .await?
+                .await?
         )
     }
 
@@ -1769,24 +1768,27 @@ impl<'a> StorageProcessor<'a> {
         )
     }
 
-    pub async fn get_process_withdraw_record(
+    pub async fn get_tx_info_for_gen_proof(
         &mut self,
         block_number: i64,
-    ) -> anyhow::Result<Vec<GoatTxRecord>> {
-        Ok(
-            sqlx::query_as!(
-                GoatTxRecord,
-                "SELECT instance_id as \"instance_id:Uuid\" , graph_id as \"graph_id:Uuid\", tx_type, \
-                 tx_hash, height, is_local, prove_status, extra, created_at From goat_tx_record where height = ?  \
-                 AND tx_type = 'ProceedWithdraw' ORDER BY height asc",
-                block_number
-            ).fetch_all(self.conn())
-                .await?
-        )
+    ) -> anyhow::Result<Vec<(Uuid, String, String)>> {
+        #[derive(sqlx::FromRow)]
+        struct TxInfoRow {
+            graph_id: Uuid,
+            zkm_version: String,
+            tx_hash: String,
+        }
+        let tx_info_rows = sqlx::query_as!(
+            TxInfoRow,
+            "SELECT g.graph_id AS \"graph_id:Uuid\", g.zkm_version AS zkm_version, gtr.tx_hash AS tx_hash 
+FROM graph g INNER JOIN goat_tx_record gtr ON g.graph_id = gtr.graph_id WHERE gtr.height = ? AND gtr.tx_type = 'ProceedWithdraw'",
+            block_number
+        ).fetch_all(self.conn()).await?;
+        Ok(tx_info_rows.into_iter().map(|v| (v.graph_id, v.tx_hash, v.zkm_version)).collect())
     }
 
     pub async fn skip_groth16_proof(&mut self, block_number: i64) -> anyhow::Result<bool> {
-        Ok(self.get_process_withdraw_record(block_number).await?.is_empty())
+        Ok(self.get_tx_info_for_gen_proof(block_number).await?.is_empty())
     }
 
     pub async fn update_goat_tx_record_prove_status(
@@ -1804,6 +1806,44 @@ impl<'a> StorageProcessor<'a> {
             tx_type
             ).execute(self.conn()).await?;
         Ok(())
+    }
+
+    pub async fn get_range_proofs(
+        &mut self,
+        proof_type: ProofType,
+        block_number_min: i64,
+        block_number_max: i64,
+    ) -> anyhow::Result<Vec<(i64, String, i64, i64, i64)>> {
+        #[derive(sqlx::FromRow)]
+        struct ProofInfoRow {
+            block_number: i64,
+            state: String,
+            proving_time: i64,
+            created_at: i64,
+            updated_at: i64,
+        }
+        let query = match proof_type {
+            ProofType::BlockProof => {
+                "SELECT block_number, state, proving_time, created_at, updated_at FROM block_proof WHERE block_number BETWEEN ? AND ? ORDER BY block_number ASC"
+            }
+            ProofType::AggregationProof => {
+                "SELECT block_number, state, proving_time, created_at, updated_at FROM aggregation_proof WHERE block_number BETWEEN ? AND ? ORDER BY block_number ASC"
+            }
+            ProofType::Groth16Proof => {
+                "SELECT block_number, state, proving_time, created_at, updated_at FROM groth16_proof WHERE block_number BETWEEN ? AND ? ORDER BY block_number ASC"
+            }
+        };
+
+        let rows = sqlx::query_as::<_, ProofInfoRow>(query)
+            .bind(block_number_min)
+            .bind(block_number_max)
+            .fetch_all(self.conn())
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|v| (v.block_number, v.state, v.proving_time, v.created_at, v.updated_at))
+            .collect())
     }
 }
 

@@ -13,6 +13,7 @@ pub struct Node {
     pub actor: String,
     pub goat_addr: String,
     pub btc_pub_key: String,
+    pub socket_addr: String,
     pub updated_at: i64,
     pub created_at: i64,
 }
@@ -202,6 +203,7 @@ pub struct Graph {
     pub bridge_out_from_addr: String,
     pub bridge_out_to_addr: String,
     pub init_withdraw_txid: Option<String>,
+    pub zkm_version: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -679,4 +681,12 @@ pub struct GoatTxRecord {
     pub prove_status: String,
     pub extra: Option<String>,
     pub created_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum ProofType {
+    #[default]
+    BlockProof,
+    AggregationProof,
+    Groth16Proof,
 }

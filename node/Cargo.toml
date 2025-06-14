@@ -81,8 +81,11 @@ ark-groth16 = { workspace = true }
 ark-serialize = { workspace = true }
 async-trait = { workspace = true }
 
+stun-client = "0.1.4"
+
 # bin
 tempfile = "3.19.1"
+groth16 = { path = "../covenant/groth16" }
 
 [dev-dependencies]
 serial_test = "3.2.0"
