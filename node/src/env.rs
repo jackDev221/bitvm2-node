@@ -80,6 +80,8 @@ pub const SYNC_GRAPH_MAX_WAIT_SECS: u64 = 30;
 // use to judge load history event thread is dead
 pub const LOAD_HISTORY_EVENT_NO_WOKING_MAX_SECS: i64 = 3600;
 
+pub const GATEWAY_RATE_MULTIPLIER: u64 = 10000;
+
 pub fn get_network() -> Network {
     BTC_NETWORK
 }
