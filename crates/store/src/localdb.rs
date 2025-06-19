@@ -1838,13 +1838,13 @@ FROM graph g INNER JOIN goat_tx_record gtr ON g.graph_id = gtr.graph_id WHERE gt
         proof_type: ProofType,
         block_number_min: i64,
         block_number_max: i64,
-    ) -> anyhow::Result<Vec<(i64, String, i64, i64, String, i64, i64)>> {
+    ) -> anyhow::Result<Vec<(i64, String, i64, f64, String, i64, i64)>> {
         #[derive(sqlx::FromRow)]
         struct ProofInfoRow {
             block_number: i64,
             state: String,
             proving_time: i64,
-            proof_size: i64,
+            proof_size: f64,
             zkm_version: String,
             created_at: i64,
             updated_at: i64,
