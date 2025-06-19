@@ -1901,7 +1901,7 @@ FROM graph g INNER JOIN goat_tx_record gtr ON g.graph_id = gtr.graph_id WHERE gt
                 )
                 SELECT
                 COALESCE((SELECT MAX(block_number) FROM block_proof), 0) AS max_block_number,
-                COALESCE((SELECT AVG(total_time_to_proof) FROM top_6_blocks),0) AS avg_total_proof_time"#
+                COALESCE((SELECT AVG(total_time_to_proof) FROM top_6_blocks),0.0) AS avg_total_proof_time"#
             }
             ProofType::AggregationProof => {
                 r#"WITH top_6_blocks AS (
@@ -1911,7 +1911,7 @@ FROM graph g INNER JOIN goat_tx_record gtr ON g.graph_id = gtr.graph_id WHERE gt
                 )
                 SELECT
                 COALESCE((SELECT MAX(block_number) FROM aggregation_proof), 0) AS max_block_number,
-                COALESCE((SELECT AVG(total_time_to_proof) FROM top_6_blocks),0) AS avg_total_proof_time"#
+                COALESCE((SELECT AVG(total_time_to_proof) FROM top_6_blocks),0.0) AS avg_total_proof_time"#
             }
             ProofType::Groth16Proof => {
                 r#"WITH top_6_blocks AS (
@@ -1921,7 +1921,7 @@ FROM graph g INNER JOIN goat_tx_record gtr ON g.graph_id = gtr.graph_id WHERE gt
                 )
                 SELECT
                 COALESCE((SELECT MAX(block_number) FROM groth16_proof), 0) AS max_block_number,
-                COALESCE((SELECT AVG(total_time_to_proof) FROM top_6_blocks),0) AS avg_total_proof_time"#
+                COALESCE((SELECT AVG(total_time_to_proof) FROM top_6_blocks),0.0) AS avg_total_proof_time"#
             }
         };
         let res = sqlx::query_as::<_, OverviewProof>(query).fetch_one(self.conn()).await?;
