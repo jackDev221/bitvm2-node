@@ -46,7 +46,7 @@ pub struct Proofs {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProofsOverview {
     pub total_blocks: i64,
-    pub avg_block_proof: i64,
-    pub avg_aggregation_proof: i64,
-    pub avg_groth16_proof: i64,
+    pub avg_block_proof: f64,
+    pub avg_aggregation_proof: f64,
+    pub avg_groth16_proof: f64,
 }

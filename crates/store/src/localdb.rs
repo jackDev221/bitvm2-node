@@ -1886,11 +1886,11 @@ FROM graph g INNER JOIN goat_tx_record gtr ON g.graph_id = gtr.graph_id WHERE gt
     pub async fn get_proof_overview(
         &mut self,
         proof_type: ProofType,
-    ) -> anyhow::Result<(i64, i64)> {
+    ) -> anyhow::Result<(i64, f64)> {
         #[derive(sqlx::FromRow)]
         struct OverviewProof {
             max_block_number: i64,
-            avg_total_proof_time: i64,
+            avg_total_proof_time: f64,
         }
         let query = match proof_type {
             ProofType::BlockProof => {
