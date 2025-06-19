@@ -32,7 +32,7 @@ pub struct ProofItem {
     pub state: String,
     pub proving_time: i64,
     pub total_time_to_proof: i64,
-    pub proof_size: i64,
+    pub proof_size: f64,
     pub zkm_version: String,
     pub started_at: i64,
     pub updated_at: i64,
