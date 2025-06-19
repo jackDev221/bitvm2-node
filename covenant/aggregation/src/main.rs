@@ -17,7 +17,6 @@ use crate::executor::*;
 pub const AGGREGATION_ELF: &[u8] = include_elf!("guest-aggregation");
 pub const GROTH16_ELF: &[u8] = include_elf!("guest-groth16");
 
-const LOG_DIR: &str = "./logs";
 const LOG_FILE: &str = "aggregation.log";
 const LOG_FIELS_COUNT: u64 = 7;
 
@@ -30,8 +29,11 @@ async fn main() {
         std::env::set_var("RUST_LOG", "info");
     }
 
+    let args = Args::parse();
+    assert!(args.block_number > 2, "Block number must be greater than 2");
+
     // Initialize the logger.
-    let appender = LogRollerBuilder::new(LOG_DIR, LOG_FILE)
+    let appender = LogRollerBuilder::new(args.log_dir.as_ref(), LOG_FILE)
         .rotation(Rotation::AgeBased(RotationAge::Daily))
         .max_keep_files(LOG_FIELS_COUNT)
         .build()
@@ -46,14 +48,18 @@ async fn main() {
         .finish()
         .init();
 
-    let args = Args::parse();
-
     let local_db: LocalDB = LocalDB::new(&format!("sqlite:{}", args.database_url), true).await;
     let local_db = Arc::new(Db::new(Arc::new(local_db)));
     let client = Arc::new(ProverClient::new());
 
-    let agg_executor =
-        AggregationExecutor::new(local_db.clone(), client.clone(), AGGREGATION_ELF).await;
+    let agg_executor = AggregationExecutor::new(
+        local_db.clone(),
+        client.clone(),
+        AGGREGATION_ELF,
+        args.block_number,
+        args.start,
+    )
+    .await;
     let groth16_executor = Groth16Executor::new(local_db, client, GROTH16_ELF).await;
 
     let (block_number_tx, block_number_rx) = sync_channel::<u64>(2);
