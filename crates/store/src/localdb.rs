@@ -543,7 +543,16 @@ impl<'a> StorageProcessor<'a> {
     /// Insert or update node without reward field
     pub async fn update_node(&mut self, node: Node) -> anyhow::Result<u64> {
         let res = sqlx::query!(
-            "INSERT OR REPLACE INTO  node (peer_id, actor, goat_addr, btc_pub_key, socket_addr, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ",
+            r#"
+            INSERT INTO node (peer_id, actor, goat_addr, btc_pub_key, socket_addr, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (peer_id) DO UPDATE SET
+                actor = excluded.actor,
+                goat_addr = excluded.goat_addr,
+                btc_pub_key = excluded.btc_pub_key,
+                socket_addr = excluded.socket_addr,
+                updated_at = excluded.updated_at
+            "#,
             node.peer_id,
             node.actor,
             node.goat_addr,
