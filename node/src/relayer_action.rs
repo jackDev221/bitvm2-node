@@ -359,12 +359,12 @@ pub async fn fetch_history_events(
                 continue;
             }
             let current_finalized = current_finalized?;
-            if watch_contract.from_height >= current_finalized {
+            if watch_contract.from_height > current_finalized {
                 info!(
-                    "Not need to fetch history events, as current finalize height: {current_finalized} is litter than watch from height: {}",
+                    "fetch history events will finish, as current finalize height: {current_finalized} is litter than watch from height: {}",
                     watch_contract.from_height,
                 );
-                break;
+                continue;
             }
 
             let to_height = current_finalized.min(watch_contract.from_height + watch_contract.gap);
