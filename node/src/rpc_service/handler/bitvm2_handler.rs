@@ -454,8 +454,12 @@ pub async fn get_instances_overview(
 ) -> (StatusCode, Json<InstanceOverviewResponse>) {
     let async_fn = || async move {
         let mut storage_process = app_state.local_db.acquire().await?;
-        let (pegin_sum, pegin_count) =
-            storage_process.get_sum_bridge_in(BridgePath::BTCToPgBTC.to_u8()).await?;
+        let (pegin_sum, pegin_count) = storage_process
+            .get_sum_bridge_in(
+                BridgePath::BTCToPgBTC.to_u8(),
+                &BridgeInStatus::PresignedFailed.to_string(),
+            )
+            .await?;
         let (pegout_sum, pegout_count) = storage_process.get_sum_bridge_out().await?;
         let (total, alive) = storage_process.get_nodes_info(ALIVE_TIME_JUDGE_THRESHOLD).await?;
         Ok::<InstanceOverviewResponse, Box<dyn std::error::Error>>(InstanceOverviewResponse {
@@ -631,9 +635,9 @@ pub fn convert_to_rpc_query_data(
     from_addr: Option<String>,
     bridge_in_status: &[String],
 ) -> Result<Option<GrapRpcQueryData>, Box<dyn std::error::Error>> {
-    if bridge_in_status.contains(&graph.status) {
-        return Ok(None);
-    }
+    // if bridge_in_status.contains(&graph.status) {
+    //     return Ok(None);
+    // }
 
     let mut graph_res = GrapRpcQueryData {
         graph_id: graph.graph_id,
