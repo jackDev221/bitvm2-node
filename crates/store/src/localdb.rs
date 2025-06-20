@@ -1074,17 +1074,19 @@ impl<'a> StorageProcessor<'a> {
 
         sqlx::query!(
             r#"
-            INSERT INTO block_proof 
-                (block_number, state, created_at) 
+            INSERT INTO block_proof
+                (block_number, state, created_at, updated_at)
             VALUES 
-                (?, ?, ?)
+                (?, ?, ?, ?)
             ON CONFLICT(block_number) DO UPDATE SET
                 state = excluded.state,
-                created_at = excluded.created_at
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
             "#,
             block_number,
             state,
-            timestamp
+            timestamp,
+            timestamp,
         )
         .execute(self.conn())
         .await?;
@@ -1265,16 +1267,18 @@ impl<'a> StorageProcessor<'a> {
         sqlx::query!(
             r#"
             INSERT INTO aggregation_proof 
-                (block_number, state, created_at) 
+                (block_number, state, created_at, updated_at)
             VALUES
-                (?, ?, ?)
+                (?, ?, ?, ?)
             ON CONFLICT(block_number) DO UPDATE SET
                 state = excluded.state,
-                created_at = excluded.created_at
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
             "#,
             block_number,
             state,
-            timestamp
+            timestamp,
+            timestamp,
         )
         .execute(self.conn())
         .await?;
@@ -1447,15 +1451,17 @@ impl<'a> StorageProcessor<'a> {
         sqlx::query!(
             r#"
             INSERT INTO groth16_proof 
-                (block_number, state, created_at) 
+                (block_number, state, created_at, updated_at)
             VALUES
-                (?, ?, ?)
+                (?, ?, ?, ?)
             ON CONFLICT(block_number) DO UPDATE SET
                 state = excluded.state,
-                created_at = excluded.created_at
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
             "#,
             block_number,
             state,
+            timestamp,
             timestamp
         )
         .execute(self.conn())
