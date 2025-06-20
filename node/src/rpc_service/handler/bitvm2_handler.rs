@@ -2,8 +2,7 @@ use crate::env::IpfsTxName;
 use crate::rpc_service::bitvm2::*;
 use crate::rpc_service::node::ALIVE_TIME_JUDGE_THRESHOLD;
 use crate::rpc_service::{AppState, current_time_secs};
-use crate::utils::node_p2wsh_address;
-use alloy::primitives::Address as EvmAddress;
+use crate::utils::{node_p2wsh_address, reflect_goat_address};
 use anyhow::bail;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -618,16 +617,6 @@ pub async fn get_graphs(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(resp))
         }
     }
-}
-
-pub fn reflect_goat_address(addr_op: Option<String>) -> (bool, Option<String>) {
-    if let Some(addr) = addr_op
-        && let Ok(addr) = EvmAddress::from_str(&addr)
-    {
-        return (true, Some(addr.to_string()));
-    }
-
-    (false, None)
 }
 
 pub fn convert_to_rpc_query_data(
