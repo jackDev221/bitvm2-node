@@ -674,10 +674,15 @@ impl<'a> StorageProcessor<'a> {
         Ok(res)
     }
 
-    pub async fn get_sum_bridge_in(&mut self, bridge_path: u8) -> anyhow::Result<(i64, i64)> {
+    pub async fn get_sum_bridge_in(
+        &mut self,
+        bridge_path: u8,
+        filter_status: &str,
+    ) -> anyhow::Result<(i64, i64)> {
         let record = sqlx::query!(
-            "SELECT SUM(amount) as total, COUNT(*) as tx_count FROM instance WHERE bridge_path = ? ",
-            bridge_path
+            "SELECT SUM(amount) as total, COUNT(*) as tx_count FROM instance WHERE bridge_path = ? and status != ? ",
+            bridge_path,
+            filter_status
         )
             .fetch_one(self.conn())
             .await?;
