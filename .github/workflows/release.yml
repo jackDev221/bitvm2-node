@@ -63,10 +63,9 @@ jobs:
         run: |
           choco install protoc
       # Install Rust nightly toolchain
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          override: true
+      - uses: taiki-e/install-action@v2
+          with:
+            toolchain: nightly
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required)
@@ -74,7 +73,6 @@ jobs:
           archive: $bin-$target
           target: ${{ matrix.target }}
           tar: all
-          manifest-path: node/Cargo.toml
         env:
           # (required)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
