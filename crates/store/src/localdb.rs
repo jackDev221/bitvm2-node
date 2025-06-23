@@ -701,7 +701,7 @@ impl<'a> StorageProcessor<'a> {
     pub async fn get_sum_bridge_out(&mut self) -> anyhow::Result<(i64, i64)> {
         let record = sqlx::query!(
             "SELECT SUM(amount) as total, COUNT(*) as tx_count FROM graph WHERE status NOT IN \
-            ('OperatorPresigned','CommitteePresigned','OperatorDataPushed')"
+            ('OperatorPresigned','CommitteePresigned','OperatorDataPushed', 'Obsoleted')"
         )
         .fetch_one(self.conn())
         .await?;
