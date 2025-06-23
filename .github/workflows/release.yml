@@ -76,10 +76,15 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           Invoke-WebRequest -Uri https://nmap.org/npcap/dist/npcap-1.79.exe -OutFile npcap-installer.exe
-          ./npcap-installer.exe /S /winpcap_mode=yes
-          echo "PNET_LIB_PATH=C:\Program Files\Npcap\Lib\x64" >> $env:GITHUB_ENV
+          Start-Process -FilePath "./npcap-installer.exe" -ArgumentList "/S", "/winpcap_mode=yes" -Wait
+          $npcap_lib_path = "C:\\Program Files\\Npcap\\Lib\\x64"
+          if (-not (Test-Path "$npcap_lib_path\\Packet.lib")) {
+            Write-Error "Packet.lib not found after Npcap installation."
+            exit 1
+          }
+          echo "PNET_LIB_PATH=$npcap_lib_path" >> $env:GITHUB_ENV
+          echo "RUSTFLAGS=-L native=$npcap_lib_path -C target-feature=+crt-static" >> $env:GITHUB_ENV
           echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe" >> $env:GITHUB_ENV
-          echo "RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required)
@@ -92,5 +97,3 @@ jobs:
           # (required)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_PROFILE_RELEASE_LTO: true
-          # Windows specific settings
-          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
