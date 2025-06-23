@@ -77,10 +77,8 @@ jobs:
         run: |
           echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe" >> $env:GITHUB_ENV
           echo "RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV
-          # Install Windows network libraries for pnet
-          choco install npcap
-          # Set pnet library path
-          echo "PNET_LIB_PATH=C:\Program Files\Npcap\Lib\x64" >> $env:GITHUB_ENV
+          # Set Windows network library path for pnet
+          echo "PNET_LIB_PATH=C:\Windows\System32" >> $env:GITHUB_ENV
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required)
@@ -96,4 +94,4 @@ jobs:
           # Windows specific settings
           RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
           # Windows network library path for pnet
-          PNET_LIB_PATH: ${{ matrix.os == 'windows-latest' && 'C:\Program Files\Npcap\Lib\x64' || '' }}
+          PNET_LIB_PATH: ${{ matrix.os == 'windows-latest' && 'C:\Windows\System32' || '' }}
