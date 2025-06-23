@@ -46,9 +46,11 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           choco install protoc
-      - uses: taiki-e/install-action@v2
+      # Install Rust nightly toolchain
+      - uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly
+          override: true
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required)
