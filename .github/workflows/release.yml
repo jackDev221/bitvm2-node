@@ -30,6 +30,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@master
+      # Install Go for all platforms (required for zkm-recursion-gnark-ffi)
+      - name: Install Go (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      - name: Install Go (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      - name: Install Go (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
       # Install protobuf-compiler for Ubuntu
       - name: Install protobuf-compiler (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
@@ -46,9 +62,43 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           choco install protoc
-      - uses: taiki-e/install-action@v2
+      # Install MSVC Tools (Windows)
+      - name: Setup MSVC (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: microsoft/setup-msbuild@v1.3.1
+      # Install Rust nightly toolchain
+      - uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly
+          override: true
+      # Set Windows environment variables for linking
+      - name: Get Npcap SDK and Set Windows Environment (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $sdk_dir = "npcap-sdk"
+          Invoke-WebRequest -Uri https://nmap.org/npcap/dist/npcap-sdk-1.13.zip -OutFile npcap-sdk.zip
+          Expand-Archive -Path npcap-sdk.zip -DestinationPath $sdk_dir
+
+          $npcap_lib_path = ""
+          $path1 = Join-Path $sdk_dir "Lib/x64"
+          $path2 = Join-Path $sdk_dir "npcap-sdk-1.13/Lib/x64"
+
+          if (Test-Path (Join-Path $path1 "Packet.lib")) {
+            $npcap_lib_path = $path1
+          } elseif (Test-Path (Join-Path $path2 "Packet.lib")) {
+            $npcap_lib_path = $path2
+          } else {
+            echo "--- Listing extracted files for debugging ---"
+            Get-ChildItem -Path $sdk_dir -Recurse
+            Write-Error "Packet.lib not found in downloaded Npcap SDK."
+            exit 1
+          }
+
+          $absolute_path = (Resolve-Path $npcap_lib_path).Path
+          echo "Found Packet.lib in '$absolute_path'"
+          echo "RUSTFLAGS=-L native=$absolute_path -C target-feature=+crt-static" >> $env:GITHUB_ENV
+          echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe" >> $env:GITHUB_ENV
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required)
