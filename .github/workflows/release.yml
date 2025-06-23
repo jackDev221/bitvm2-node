@@ -62,11 +62,10 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           choco install protoc
-      # Install Windows Build Tools (Windows)
-      - name: Install MSVC Tools (Windows)
+      # Install MSVC Tools (Windows)
+      - name: Setup MSVC (Windows)
         if: matrix.os == 'windows-latest'
-        run: |
-          choco install microsoft-visual-cpp-build-tools
+        uses: microsoft/setup-msbuild@v1.3.1
       # Install Rust nightly toolchain
       - uses: actions-rs/toolchain@v1
         with:
@@ -76,7 +75,6 @@ jobs:
       - name: Set Windows Environment (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
           echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe" >> $env:GITHUB_ENV
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
