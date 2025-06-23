@@ -72,17 +72,17 @@ jobs:
           toolchain: nightly
           override: true
       # Set Windows environment variables for linking
-      - name: Install Npcap and Set Windows Environment (Windows)
+      - name: Get Npcap SDK and Set Windows Environment (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          Invoke-WebRequest -Uri https://nmap.org/npcap/dist/npcap-1.79.exe -OutFile npcap-installer.exe
-          Start-Process -FilePath "./npcap-installer.exe" -ArgumentList "/S", "/winpcap_mode=yes" -Wait
-          $npcap_lib_path = "C:\\Program Files\\Npcap\\Lib\\x64"
+          Invoke-WebRequest -Uri https://nmap.org/npcap/dist/npcap-sdk-1.13.zip -OutFile npcap-sdk.zip
+          Expand-Archive -Path npcap-sdk.zip -DestinationPath .
+          $npcap_sdk_path = (Get-ChildItem -Path . -Directory -Filter "npcap-sdk*").FullName
+          $npcap_lib_path = "$npcap_sdk_path\\Lib\\x64"
           if (-not (Test-Path "$npcap_lib_path\\Packet.lib")) {
-            Write-Error "Packet.lib not found after Npcap installation."
+            Write-Error "Packet.lib not found in downloaded Npcap SDK."
             exit 1
           }
-          echo "PNET_LIB_PATH=$npcap_lib_path" >> $env:GITHUB_ENV
           echo "RUSTFLAGS=-L native=$npcap_lib_path -C target-feature=+crt-static" >> $env:GITHUB_ENV
           echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe" >> $env:GITHUB_ENV
       - uses: taiki-e/upload-rust-binary-action@v1
