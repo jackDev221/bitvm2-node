@@ -63,10 +63,7 @@ jobs:
         run: |
           choco install protoc
       # Install Rust nightly toolchain
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          override: true
+      - uses: actions-rs/toolchain@v2
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required)
