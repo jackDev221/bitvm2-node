@@ -58,6 +58,7 @@ jobs:
           archive: $bin-$target
           target: ${{ matrix.target }}
           tar: all
+          manifest-path: node/Cargo.toml
         env:
           # (required)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
