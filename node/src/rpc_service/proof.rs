@@ -16,7 +16,7 @@ pub struct ProofsQueryParams {
 // }
 
 fn default_block_range() -> i64 {
-    5
+    6
 }
 
 #[derive(Debug, Deserialize, Serialize)]
