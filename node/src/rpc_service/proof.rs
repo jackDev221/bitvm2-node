@@ -38,6 +38,20 @@ pub struct ProofItem {
     pub updated_at: i64,
 }
 
+impl ProofItem {
+    pub fn create_mock_data(&self, time_cast: i64) -> ProofItem {
+        Self {
+            state: self.state.clone(),
+            started_at: self.updated_at + 500,
+            updated_at: self.updated_at + 500 + time_cast,
+            total_time_to_proof: time_cast,
+            proof_size: self.proof_size,
+            proving_time: time_cast,
+            zkm_version: self.zkm_version.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Proofs {
     pub block_proofs: Vec<BlockProofs>,
