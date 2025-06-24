@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR\n             REPLACE INTO message_broadcast (instance_id, graph_id, msg_type, msg_times, created_at, updated_at)\n             VALUES (?, ?, ?, ?, ?, ?) ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "f67f281f4b36142f81d0845dc099eb4c5ff1813766c4262dd0fef7657fae61dd"
+}
