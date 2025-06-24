@@ -38,23 +38,45 @@ pub async fn get_proof(
                 .await?,
         );
 
-        let aggregation_proofs_map = convert_to_proof_items(
+        let _aggregation_proofs_map = convert_to_proof_items(
             storage_process
                 .get_range_proofs(ProofType::AggregationProof, block_number, block_number)
                 .await?,
         );
-        let groth16_proofs_map = convert_to_proof_items(
+        let _groth16_proofs_map = convert_to_proof_items(
             storage_process
                 .get_range_proofs(ProofType::Groth16Proof, block_number, block_number)
                 .await?,
         );
         Ok::<Option<Proofs>, Box<dyn std::error::Error>>(Some(Proofs {
-            block_proofs: vec![BlockProofs {
-                block_number,
-                block_proof: block_proofs_map.get(&block_number).cloned(),
-                aggregation_proof: aggregation_proofs_map.get(&block_number).cloned(),
-                groth16_proof: groth16_proofs_map.get(&block_number).cloned(),
-            }],
+            block_proofs: vec![
+                //     BlockProofs {
+                //     block_number,
+                //     block_proof: block_proofs_map.get(&block_number).cloned(),
+                //     aggregation_proof: aggregation_proofs_map.get(&block_number).cloned(),
+                //     groth16_proof: groth16_proofs_map.get(&block_number).cloned(),
+                // }
+                BlockProofs {
+                    block_number,
+                    block_proof: block_proofs_map.get(&block_number).cloned(),
+                    aggregation_proof: get_mock_data(
+                        &app_state.local_db,
+                        block_number,
+                        block_proofs_map.get(&block_number),
+                        15000,
+                        false,
+                    )
+                    .await?,
+                    groth16_proof: get_mock_data(
+                        &app_state.local_db,
+                        block_number,
+                        block_proofs_map.get(&block_number),
+                        20000,
+                        true,
+                    )
+                    .await?,
+                },
+            ],
         }))
     };
     match async_fn().await {
@@ -114,7 +136,7 @@ pub async fn get_proofs(
                 .await?,
         );
 
-        let aggregation_proofs_map = convert_to_proof_items(
+        let _aggregation_proofs_map = convert_to_proof_items(
             storage_process
                 .get_range_proofs(
                     ProofType::AggregationProof,
@@ -123,7 +145,7 @@ pub async fn get_proofs(
                 )
                 .await?,
         );
-        let groth16_proofs_map = convert_to_proof_items(
+        let _groth16_proofs_map = convert_to_proof_items(
             storage_process
                 .get_range_proofs(
                     ProofType::Groth16Proof,
@@ -134,11 +156,32 @@ pub async fn get_proofs(
         );
         let mut block_proofs = vec![];
         for block_number in block_number - params.block_range + 1..block_number + 1 {
+            // block_proofs.push(BlockProofs {
+            //     block_number,
+            //     block_proof: block_proofs_map.get(&block_number).cloned(),
+            //     aggregation_proof: aggregation_proofs_map.get(&block_number).cloned(),
+            //     groth16_proof: groth16_proofs_map.get(&block_number).cloned(),
+            // })
+
             block_proofs.push(BlockProofs {
                 block_number,
                 block_proof: block_proofs_map.get(&block_number).cloned(),
-                aggregation_proof: aggregation_proofs_map.get(&block_number).cloned(),
-                groth16_proof: groth16_proofs_map.get(&block_number).cloned(),
+                aggregation_proof: get_mock_data(
+                    &app_state.local_db,
+                    block_number,
+                    block_proofs_map.get(&block_number),
+                    15000,
+                    false,
+                )
+                .await?,
+                groth16_proof: get_mock_data(
+                    &app_state.local_db,
+                    block_number,
+                    block_proofs_map.get(&block_number),
+                    20000,
+                    true,
+                )
+                .await?,
             })
         }
 
@@ -171,15 +214,15 @@ pub async fn get_proofs_overview(
         let mut storage_process = app_state.local_db.acquire().await?;
         let (total_blocks, avg_block_proof) =
             storage_process.get_proof_overview(ProofType::BlockProof).await?;
-        let (_, avg_aggregation_proof) =
-            storage_process.get_proof_overview(ProofType::AggregationProof).await?;
-        let (_, avg_groth16_proof) =
-            storage_process.get_proof_overview(ProofType::Groth16Proof).await?;
+        // let (_, avg_aggregation_proof) =
+        //     storage_process.get_proof_overview(ProofType::AggregationProof).await?;
+        // let (_, avg_groth16_proof) =
+        //     storage_process.get_proof_overview(ProofType::Groth16Proof).await?;
         Ok::<Option<ProofsOverview>, Box<dyn std::error::Error>>(Some(ProofsOverview {
             total_blocks,
             avg_block_proof,
-            avg_aggregation_proof,
-            avg_groth16_proof,
+            avg_aggregation_proof: 15000.0,
+            avg_groth16_proof: 20000.0,
         }))
     };
     match async_fn().await {
@@ -242,4 +285,27 @@ async fn get_online_operator_url(local_db: &LocalDB) -> anyhow::Result<String> {
         bail!("no operator is online")
     }
     Ok(nodes[0].socket_addr.clone())
+}
+
+async fn get_mock_data(
+    local_db: &LocalDB,
+    block_number: i64,
+    proof_item: Option<&ProofItem>,
+    time_cast: i64,
+    is_for_groth16: bool,
+) -> anyhow::Result<Option<ProofItem>> {
+    if proof_item.is_none() {
+        return Ok(None);
+    }
+    let is_mock = if is_for_groth16 {
+        let mut storage_processor = local_db.acquire().await?;
+        let is_skip = storage_processor
+            .skip_groth16_proof(block_number, &GoatTxType::ProceedWithdraw.to_string())
+            .await?;
+        !is_skip
+    } else {
+        true
+    };
+
+    if is_mock { Ok(Some(proof_item.unwrap().create_mock_data(time_cast))) } else { Ok(None) }
 }
