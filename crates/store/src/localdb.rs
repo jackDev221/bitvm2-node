@@ -2042,7 +2042,35 @@ impl<'a> StorageProcessor<'a> {
         &mut self,
         goat_tx_record: &GoatTxRecord,
     ) -> anyhow::Result<()> {
-        let _ = sqlx::query!(
+        if goat_tx_record.extra.is_some() {
+            // update extra
+            sqlx::query!(
+            "INSERT INTO goat_tx_record (instance_id,
+                            graph_id,
+                            tx_type,
+                            tx_hash,
+                            height,
+                            is_local,
+                            prove_status,
+                            extra,
+                            created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (instance_id, graph_id, tx_type) DO UPDATE SET prove_status = EXCLUDED.prove_status,
+                                                           created_at   = EXCLUDED.created_at",
+            goat_tx_record.instance_id,
+            goat_tx_record.graph_id,
+            goat_tx_record.tx_type,
+            goat_tx_record.tx_hash,
+            goat_tx_record.height,
+            goat_tx_record.is_local,
+            goat_tx_record.prove_status,
+            goat_tx_record.extra,
+            goat_tx_record.created_at
+        )
+                .execute(self.conn())
+                .await?;
+        } else {
+            sqlx::query!(
             "INSERT INTO goat_tx_record (instance_id,
                             graph_id,
                             tx_type,
@@ -2066,8 +2094,9 @@ impl<'a> StorageProcessor<'a> {
             goat_tx_record.extra,
             goat_tx_record.created_at
         )
-        .execute(self.conn())
-        .await;
+                .execute(self.conn())
+                .await?;
+        }
         Ok(())
     }
 

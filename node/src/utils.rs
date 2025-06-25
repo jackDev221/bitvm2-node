@@ -722,12 +722,19 @@ pub async fn get_groth16_proof(
         return get_test_groth16_proof();
     }
 
-    let mut db_lock = local_db.acquire().await?;
-    let tx_record_op = db_lock
+    let mut storage_processor = local_db.acquire().await?;
+    if let Some(tx_record) = storage_processor
         .get_graph_goat_tx_record(graph_id, &GoatTxType::ProceedWithdraw.to_string())
-        .await?;
-    if tx_record_op.is_none() {
-        db_lock
+        .await?
+        && let Ok((proof, pis, vk, version)) =
+            groth16::get_groth16_proof(local_db, tx_record.height as u64).await
+    {
+        tracing::info!(
+            "instance_id:{instance_id}, graph_id:{graph_id} finish get groth16 proof at version: {version}"
+        );
+        Ok((proof, pis, vk))
+    } else {
+        storage_processor
             .create_or_update_goat_tx_record(&GoatTxRecord {
                 instance_id: instance_id.clone(),
                 graph_id: graph_id.clone(),
@@ -742,17 +749,8 @@ pub async fn get_groth16_proof(
                 created_at: 0,
             })
             .await?;
-        return Err(
-            format!("instance_id:{instance_id}, graph_id:{graph_id} not find goat tx!").into()
-        );
+        Err(format!("instance_id:{instance_id}, graph_id:{graph_id} not ready!").into())
     }
-    let (proof, pis, vk, version) =
-        groth16::get_groth16_proof(local_db, tx_record_op.unwrap().height as u64).await?;
-
-    tracing::info!(
-        "instance_id:{instance_id}, graph_id:{graph_id} finish get groth16 proof at version: {version}"
-    );
-    Ok((proof, pis, vk))
 }
 pub async fn get_vk(db: &LocalDB) -> Result<VerifyingKey, Box<dyn std::error::Error>> {
     if cfg!(all(feature = "tests", feature = "e2e-tests")) {
