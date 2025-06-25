@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use alloy_provider::{network::Ethereum, Provider};
@@ -19,7 +20,7 @@ mod cli;
 mod db;
 
 const LOG_FILE: &str = "continuous.log";
-const LOG_FIELS_COUNT: u64 = 7;
+const LOG_FIELS_COUNT: u64 = 2;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -41,9 +42,10 @@ async fn main() -> eyre::Result<()> {
     let (non_blocking, _guard) = tracing_appender::non_blocking(appender);
     tracing_subscriber::fmt()
         .with_env_filter(
-            "continuous=info,zkm_core_machine=warn,zkm_core_executor=error,zkm_prover=warn",
+            "continuous=info,host-executor=info,zkm_core_machine=warn,zkm_core_executor=error,zkm_prover=warn",
         )
         .with_writer(non_blocking)
+        .with_max_level(tracing::Level::INFO)
         .with_ansi(false)
         .finish()
         .init();
@@ -77,15 +79,17 @@ async fn main() -> eyre::Result<()> {
 
     let concurrent_executions_semaphore = Arc::new(Semaphore::new(args.max_concurrent_executions));
     let mut block_number = args.block_number;
-    let mut block_count = 0;
 
-    while block_number < u64::MAX {
+    let failed = Arc::new(AtomicBool::new(false));
+
+    loop {
         info!("process block: {:?}", block_number);
 
         let executor = executor.clone();
         let alerting_client = alerting_client.clone();
         let permit = concurrent_executions_semaphore.clone().acquire_owned().await?;
         let local_db = local_db.clone();
+        let flag = Arc::clone(&failed);
 
         task::spawn(async move {
             match process_block(block_number, executor, args.execution_retries).await {
@@ -111,20 +115,21 @@ async fn main() -> eyre::Result<()> {
                             alerting_client.send_alert(format!("{error_message}")).await;
                         }
                     }
+
+                    flag.store(true, Ordering::Relaxed);
                 }
             }
 
             drop(permit);
         });
 
-        block_number += 1;
-        block_count += 1;
-        if block_count % 100 == 0 {
-            info!("Processed {} blocks", block_count);
+        if failed.load(Ordering::Relaxed) {
+            error!("Exit due to the exit of the child thread");
+            return Ok(());
         }
-    }
 
-    Ok(())
+        block_number += 1;
+    }
 }
 
 #[instrument(skip(executor, max_retries))]
