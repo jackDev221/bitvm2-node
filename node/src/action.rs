@@ -235,13 +235,17 @@ pub async fn recv_and_dispatch(
         if actor == Actor::Operator {
             if let Some(message) = operator_scan_ready_proof(local_db).await? {
                 local_message = message.clone();
+            } else {
+                return Ok(());
             }
         } else {
             return Ok(());
         }
     }
 
-    update_node_timestamp(local_db, &from_peer_id.to_string()).await?;
+    if local_message.is_empty() {
+        update_node_timestamp(local_db, &from_peer_id.to_string()).await?;
+    }
 
     let message: GOATMessage = if local_message.is_empty() {
         serde_json::from_slice(message)?
