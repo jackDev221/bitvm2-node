@@ -275,7 +275,7 @@ async fn handle_proceed_withdraw_events<'a>(
                 tx_hash: event.transaction_hash,
                 height: event.block_number.parse::<i64>()?,
                 is_local: false,
-                prove_status: GoatTxProveStatus::Pending.to_string(),
+                prove_status: GoatTxProveStatus::NoNeed.to_string(),
                 extra: Some(event.kickoff_txid),
                 created_at: current_time_secs(),
             })
@@ -842,7 +842,7 @@ pub async fn scan_kickoff(
                         instance_id,
                         &tx_hash,
                         GoatTxType::ProceedWithdraw,
-                        GoatTxProveStatus::Pending.to_string(),
+                        GoatTxProveStatus::NoNeed.to_string(),
                     )
                     .await?;
 
