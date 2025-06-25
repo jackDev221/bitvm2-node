@@ -276,7 +276,7 @@ async fn handle_proceed_withdraw_events<'a>(
                 height: event.block_number.parse::<i64>()?,
                 is_local: false,
                 prove_status: GoatTxProveStatus::NoNeed.to_string(),
-                extra: Some(event.kickoff_txid),
+                extra: None,
                 created_at: current_time_secs(),
             })
             .await?
