@@ -2043,10 +2043,19 @@ impl<'a> StorageProcessor<'a> {
         goat_tx_record: &GoatTxRecord,
     ) -> anyhow::Result<()> {
         let _ = sqlx::query!(
-            "INSERT OR
-             REPLACE INTO goat_tx_record (instance_id, graph_id, tx_type, tx_hash, height, is_local,
-                                          prove_status, extra, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ",
+            "INSERT INTO goat_tx_record (instance_id,
+                            graph_id,
+                            tx_type,
+                            tx_hash,
+                            height,
+                            is_local,
+                            prove_status,
+                            extra,
+                            created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (instance_id, graph_id, tx_type) DO UPDATE SET prove_status = EXCLUDED.prove_status,
+                                                           created_at   = EXCLUDED.created_at,
+                                                           extra = EXCLUDED.extra",
             goat_tx_record.instance_id,
             goat_tx_record.graph_id,
             goat_tx_record.tx_type,
@@ -2088,10 +2097,10 @@ impl<'a> StorageProcessor<'a> {
         .await?)
     }
 
-    pub async fn get_goat_tx_record_need_proving(
+    pub async fn get_goat_tx_record_by_prove_status(
         &mut self,
         tx_type: &str,
-        prove_state: &str,
+        prove_status: &str,
     ) -> anyhow::Result<Vec<GoatTxRecord>> {
         Ok(sqlx::query_as!(
             GoatTxRecord,
@@ -2108,7 +2117,7 @@ impl<'a> StorageProcessor<'a> {
                 AND prove_status = ?
                 ORDER BY height ASC",
             tx_type,
-            prove_state
+            prove_status
         )
         .fetch_all(self.conn())
         .await?)
