@@ -232,12 +232,10 @@ pub async fn recv_and_dispatch(
         if actor == Actor::Relayer {
             do_tick_action(swarm, local_db, btc_client, goat_client).await?;
         }
-        if actor == Actor::Operator {
-            if let Some(message) = operator_scan_ready_proof(local_db).await? {
-                local_message = message.clone();
-            } else {
-                return Ok(());
-            }
+        if actor == Actor::Operator
+            && let Some(message) = operator_scan_ready_proof(local_db).await?
+        {
+            local_message = message.clone();
         } else {
             return Ok(());
         }

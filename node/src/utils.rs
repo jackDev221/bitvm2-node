@@ -736,8 +736,8 @@ pub async fn get_groth16_proof(
     } else {
         storage_processor
             .create_or_update_goat_tx_record(&GoatTxRecord {
-                instance_id: instance_id.clone(),
-                graph_id: graph_id.clone(),
+                instance_id: *instance_id,
+                graph_id: *graph_id,
                 tx_type: GoatTxType::ProceedWithdraw.to_string(),
                 tx_hash: "".to_string(),
                 height: 0,
@@ -1647,7 +1647,6 @@ pub async fn operator_scan_ready_proof(
             if extra_data.is_none() {
                 return Err("extra data is none".into());
             }
-
             let extra: GoatTxProceedWithdrawExtra = serde_json::from_str(&extra_data.unwrap())?;
             Ok(deserialize_hex(&extra.challenge_txid)?)
         };
@@ -1659,7 +1658,7 @@ pub async fn operator_scan_ready_proof(
             continue;
         }
         let challenge_txid_res = parse_challenge_txid_fn(tx.extra.clone());
-        if challenge_txid_res.is_ok() {
+        if let Ok(challenge_txid) = challenge_txid_res {
             let (proof, _, _, _) = storage_proccessor.get_groth16_proof(tx.height).await?;
             if proof.is_empty() {
                 tracing::info!("Graph id :{} proof is empty just waiting", tx.graph_id);
@@ -1667,9 +1666,9 @@ pub async fn operator_scan_ready_proof(
             }
             tracing::info!("Graph id :{} proof is ready", tx.graph_id);
             message_content = Some(GOATMessageContent::ChallengeSent(ChallengeSent {
-                instance_id: tx.instance_id.clone(),
-                graph_id: tx.graph_id.clone(),
-                challenge_txid: challenge_txid_res.unwrap(),
+                instance_id: tx.instance_id,
+                graph_id: tx.graph_id,
+                challenge_txid,
             }));
             storage_proccessor
                 .update_goat_tx_record_prove_status(
@@ -1694,7 +1693,6 @@ pub async fn operator_scan_ready_proof(
                 )
                 .await?;
         }
-
         if message_content.is_some() {
             break;
         }

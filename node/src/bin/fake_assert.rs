@@ -296,7 +296,7 @@ fn clear_cache(graph_id: Uuid) {
 }
 
 fn assert_commit_cache_file_path(graph_id: Uuid, index: usize) -> String {
-    format!("cache/tests/{}/assert-commit-{index}.bin", graph_id.to_string())
+    format!("cache/tests/{graph_id}/assert-commit-{index}.bin")
 }
 
 async fn get_assert_commits(

@@ -625,12 +625,12 @@ pub fn convert_to_rpc_query_data(
     graph: &GrapFullData,
     from_addr: Option<String>,
     bridge_in_status: &[String],
-) -> Result<Option<GrapRpcQueryData>, Box<dyn std::error::Error>> {
+) -> Result<Option<GraphRpcQueryData>, Box<dyn std::error::Error>> {
     // if bridge_in_status.contains(&graph.status) {
     //     return Ok(None);
     // }
 
-    let mut graph_res = GrapRpcQueryData {
+    let mut graph_res = GraphRpcQueryData {
         graph_id: graph.graph_id,
         instance_id: graph.instance_id,
         bridge_path: graph.bridge_path,
