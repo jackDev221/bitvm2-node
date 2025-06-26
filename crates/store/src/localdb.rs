@@ -1,9 +1,10 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, GrapFullData, Graph, GraphTickActionMetaData, Instance,
-    Message, MessageBroadcast, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofType,
-    ProofWithPis, PubKeyCollect, PubKeyCollectMetaData, WatchContract,
+    COMMITTEE_PRE_SIGN_NUM, GoatTxProveStatus, GoatTxRecord, GrapFullData, Graph,
+    GraphTickActionMetaData, Instance, Message, MessageBroadcast, Node, NodesOverview,
+    NonceCollect, NonceCollectMetaData, ProofType, ProofWithPis, PubKeyCollect,
+    PubKeyCollectMetaData, WatchContract,
 };
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolConnection;
@@ -2042,61 +2043,52 @@ impl<'a> StorageProcessor<'a> {
         &mut self,
         goat_tx_record: &GoatTxRecord,
     ) -> anyhow::Result<()> {
-        if goat_tx_record.extra.is_some() {
-            // update extra
-            sqlx::query!(
-            "INSERT INTO goat_tx_record (instance_id,
-                            graph_id,
-                            tx_type,
-                            tx_hash,
-                            height,
-                            is_local,
-                            prove_status,
-                            extra,
-                            created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (instance_id, graph_id, tx_type) DO UPDATE SET prove_status = EXCLUDED.prove_status,
-                                                           created_at   = EXCLUDED.created_at",
-            goat_tx_record.instance_id,
-            goat_tx_record.graph_id,
-            goat_tx_record.tx_type,
-            goat_tx_record.tx_hash,
-            goat_tx_record.height,
-            goat_tx_record.is_local,
-            goat_tx_record.prove_status,
-            goat_tx_record.extra,
-            goat_tx_record.created_at
-        )
-                .execute(self.conn())
-                .await?;
-        } else {
-            sqlx::query!(
-            "INSERT INTO goat_tx_record (instance_id,
-                            graph_id,
-                            tx_type,
-                            tx_hash,
-                            height,
-                            is_local,
-                            prove_status,
-                            extra,
-                            created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (instance_id, graph_id, tx_type) DO UPDATE SET prove_status = EXCLUDED.prove_status,
-                                                           created_at   = EXCLUDED.created_at,
-                                                           extra = EXCLUDED.extra",
-            goat_tx_record.instance_id,
-            goat_tx_record.graph_id,
-            goat_tx_record.tx_type,
-            goat_tx_record.tx_hash,
-            goat_tx_record.height,
-            goat_tx_record.is_local,
-            goat_tx_record.prove_status,
-            goat_tx_record.extra,
-            goat_tx_record.created_at
-        )
-                .execute(self.conn())
-                .await?;
+        let mut update_goat_tx_record = goat_tx_record.clone();
+        if let Some(goat_tx_record_store) =
+            self.get_graph_goat_tx_record(&goat_tx_record.graph_id, &goat_tx_record.tx_type).await?
+        {
+            update_goat_tx_record.created_at = goat_tx_record_store.created_at;
+            update_goat_tx_record.is_local = goat_tx_record_store.is_local;
+            if update_goat_tx_record.height < goat_tx_record_store.height {
+                update_goat_tx_record.height = goat_tx_record_store.height;
+            }
+            if goat_tx_record_store.extra.is_some() && update_goat_tx_record.extra.is_none() {
+                update_goat_tx_record.extra = goat_tx_record_store.extra.clone();
+            }
+
+            if !goat_tx_record_store.tx_hash.is_empty() {
+                update_goat_tx_record.tx_hash = goat_tx_record_store.tx_hash.clone();
+            }
+
+            if GoatTxProveStatus::Pending.to_string() == goat_tx_record_store.prove_status {
+                update_goat_tx_record.prove_status = goat_tx_record_store.prove_status.clone();
+            }
         }
+        sqlx::query!(
+            "INSERT OR
+            REPLACE INTO goat_tx_record (instance_id,
+                            graph_id,
+                            tx_type,
+                            tx_hash,
+                            height,
+                            is_local,
+                            prove_status,
+                            extra,
+                            created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            update_goat_tx_record.instance_id,
+            update_goat_tx_record.graph_id,
+            update_goat_tx_record.tx_type,
+            update_goat_tx_record.tx_hash,
+            update_goat_tx_record.height,
+            update_goat_tx_record.is_local,
+            update_goat_tx_record.prove_status,
+            update_goat_tx_record.extra,
+            update_goat_tx_record.created_at
+        )
+        .execute(self.conn())
+        .await?;
+
         Ok(())
     }
 

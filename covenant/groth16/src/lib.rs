@@ -1,7 +1,5 @@
 use anyhow::Result;
 use store::localdb::LocalDB;
-use tokio::time::{Duration, sleep};
-use tracing::info;
 use zkm_prover::ZKM_CIRCUIT_VERSION;
 use zkm_sdk::{ZKMProofWithPublicValues, ZKMStdin};
 use zkm_verifier::{GROTH16_VK_BYTES, convert_ark, load_ark_groth16_verifying_key_from_bytes};
