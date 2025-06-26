@@ -598,7 +598,9 @@ pub async fn get_graphs(
         let graph_vec = graph_vec
             .into_iter()
             .map(|mut v| {
-                if let Some((socket_addr, height)) = socket_info_map.get(&v.graph.graph_id) {
+                if let Some((socket_addr, height)) = socket_info_map.get(&v.graph.graph_id)
+                    && *height > 0
+                {
                     v.graph.proof_height = Some(*height);
                     v.graph.proof_query_url =
                         Some(format!("http://{socket_addr}/v1/proofs/{height}"));
