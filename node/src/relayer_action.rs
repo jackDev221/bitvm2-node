@@ -1190,6 +1190,15 @@ pub async fn scan_take2(
                     None,
                 )
                 .await?;
+
+                if graph_data.challenge_txid.is_none() {
+                    warn!(
+                        "graph:{} challenge tx_id is none, can not start withdraw disproved, fix me",
+                        graph_data.graph_id
+                    );
+                    continue;
+                }
+
                 let tx_hash = finish_withdraw_disproved(
                     btc_client,
                     goat_client,
