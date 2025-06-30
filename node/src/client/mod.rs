@@ -369,7 +369,15 @@ impl GOATClient {
     ) -> anyhow::Result<String> {
         tracing::info!("post_operate_data instance_id:{}, graph_id:{}", instance_id, graph_id);
         let operator_data = cast_graph_to_operate_data(graph)?;
-        let pegin_data = self.chain_service.adaptor.get_pegin_data(instance_id).await?;
+        let operator_data_online = self.get_operator_data(graph_id).await?;
+        if operator_data_online.pegin_txid != [0_u8; 32] {
+            tracing::warn!(
+                "instance_id:{instance_id} graph_id {graph_id} operator data already posted",
+            );
+            bail!("instance_id:{instance_id} graph_id {graph_id} operator data already posted");
+        }
+
+        let pegin_data = self.get_pegin_data(instance_id).await?;
         if pegin_data.pegin_txid != operator_data.pegin_txid {
             tracing::warn!(
                 "instance_id:{instance_id} graph_id {graph_id} operator data pegin txid mismatch, exp:{},  act:{}",
