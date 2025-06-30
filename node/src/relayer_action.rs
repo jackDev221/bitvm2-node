@@ -1206,7 +1206,7 @@ pub async fn scan_take2(
                         continue;
                     }
                 } else {
-                    graph_data.challenge_txid.unwrap().clone()
+                    graph_data.challenge_txid.unwrap()
                 };
 
                 let tx_hash = finish_withdraw_disproved(

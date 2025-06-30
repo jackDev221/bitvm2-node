@@ -444,21 +444,19 @@ impl GOATClient {
             if withdraw_data.status == WithdrawStatus::Disproved {
                 tracing::warn!("graph:{} at {} stage already disproved", tag, graph_id);
                 bail!("graph:{} at {} stagealready disproved", tag, graph_id);
-            } else {
-                if withdraw_data.status != status {
-                    tracing::warn!(
-                        "graph:{} at {} stage not match, exp: {status}, act: {}",
-                        tag,
-                        graph_id,
-                        withdraw_data.status
-                    );
-                    bail!(
-                        "graph:{} at {} stage not match, exp: {status}, act: {}",
-                        tag,
-                        graph_id,
-                        withdraw_data.status
-                    );
-                };
+            } else if withdraw_data.status != status {
+                tracing::warn!(
+                    "graph:{} at {} stage not match, exp: {status}, act: {}",
+                    tag,
+                    graph_id,
+                    withdraw_data.status
+                );
+                bail!(
+                    "graph:{} at {} stage not match, exp: {status}, act: {}",
+                    tag,
+                    graph_id,
+                    withdraw_data.status
+                );
             }
         }
         // check hash in btc chain and spv contract
