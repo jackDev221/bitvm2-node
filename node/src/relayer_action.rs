@@ -1132,6 +1132,7 @@ pub async fn scan_take2(
         }
         let take2_txid = graph_data.take2_txid.unwrap();
         let assert_final_txid = graph_data.assert_final_txid.unwrap();
+        let kickoff_txid = graph_data.kickoff_txid.unwrap();
         if let Some(spent_txid) = outpoint_spent_txid(btc_client, &assert_final_txid, 1).await? {
             if spent_txid == take2_txid {
                 // take2 sent, try to call finish_withdraw_unhappy_path
@@ -1191,24 +1192,29 @@ pub async fn scan_take2(
                 )
                 .await?;
 
-                if graph_data.challenge_txid.is_none() {
-                    warn!(
-                        "graph:{} challenge tx_id is none, can not start withdraw disproved, fix me",
-                        graph_data.graph_id
-                    );
-                    continue;
-                }
+                let challenge_txid = if graph_data.challenge_txid.is_none() {
+                    if let Some(spent_txid) =
+                        outpoint_spent_txid(btc_client, &kickoff_txid, 1).await?
+                        && spent_txid != graph_data.take1_txid.unwrap()
+                    {
+                        spent_txid
+                    } else {
+                        warn!(
+                            "graph:{} challenge tx_id is none, can not start withdraw disproved, fix me",
+                            graph_data.graph_id
+                        );
+                        continue;
+                    }
+                } else {
+                    graph_data.challenge_txid.unwrap().clone()
+                };
 
                 let tx_hash = finish_withdraw_disproved(
                     btc_client,
                     goat_client,
                     &graph_id,
                     &btc_client.fetch_btc_tx(&disprove_txid).await?,
-                    &btc_client
-                        .fetch_btc_tx(
-                            &graph_data.challenge_txid.expect("fail to get challenge txid"),
-                        )
-                        .await?,
+                    &btc_client.fetch_btc_tx(&challenge_txid).await?,
                 )
                 .await?;
 
