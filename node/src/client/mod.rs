@@ -245,7 +245,7 @@ impl GOATClient {
                 graph_id,
                 &disprove_tx.compute_txid(),
                 &disprove_tx.compute_txid(),
-                None,
+                Some(WithdrawStatus::Disproved),
             )
             .await?;
         let raw_disprove_tx = tx_reconstruct(disprove_tx);
@@ -433,10 +433,25 @@ impl GOATClient {
         // check withdraw status
         if let Some(status) = required_status {
             let withdraw_data = self.get_withdraw_data(graph_id).await?;
-            if withdraw_data.status != status {
-                tracing::warn!("graph:{} at {} not at processing stage", tag, graph_id);
-                bail!("graph:{} at {} not at processing stage", tag, graph_id);
-            };
+            if withdraw_data.status == WithdrawStatus::Disproved {
+                tracing::warn!("graph:{} at {} stage already disproved", tag, graph_id);
+                bail!("graph:{} at {} stagealready disproved", tag, graph_id);
+            } else {
+                if withdraw_data.status != status {
+                    tracing::warn!(
+                        "graph:{} at {} stage not match, exp: {status}, act: {}",
+                        tag,
+                        graph_id,
+                        withdraw_data.status
+                    );
+                    bail!(
+                        "graph:{} at {} stage not match, exp: {status}, act: {}",
+                        tag,
+                        graph_id,
+                        withdraw_data.status
+                    );
+                };
+            }
         }
         // check hash in btc chain and spv contract
         let (root, proof, leaf, height, index, raw_header) =
