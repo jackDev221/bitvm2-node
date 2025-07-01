@@ -1061,6 +1061,10 @@ pub async fn scan_take1(
             }
             // if take-1/challenge already sent, no need for Take1Ready
             continue;
+        } else {
+            info!(
+                "graph_id:{graph_id}, kickoff_txid: {kickoff_txid} output index 1 not been spent"
+            );
         }
         if graph_data.msg_times < MESSAGE_BROADCAST_MAX_TIMES {
             // check if kickoff's timelock for take1 is expired
@@ -1248,6 +1252,10 @@ pub async fn scan_take2(
             }
             // if take-2/disprove already sent, no need for Take2Ready
             continue;
+        } else {
+            info!(
+                "graph_id:{graph_id}, assert_final_txid: {assert_final_txid} output index 1 not been spent"
+            );
         }
         if graph_data.msg_times < MESSAGE_BROADCAST_MAX_TIMES {
             // check if assert_final's timelock for take2 is expired
