@@ -2,9 +2,9 @@ use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
     COMMITTEE_PRE_SIGN_NUM, GoatTxProveStatus, GoatTxRecord, GrapFullData, Graph,
-    GraphTickActionMetaData, Instance, Message, MessageBroadcast, Node, NodesOverview,
-    NonceCollect, NonceCollectMetaData, ProofType, ProofWithPis, PubKeyCollect,
-    PubKeyCollectMetaData, WatchContract,
+    GraphTickActionMetaData, Instance, Message, Node, NodesOverview, NonceCollect,
+    NonceCollectMetaData, ProofType, ProofWithPis, PubKeyCollect, PubKeyCollectMetaData,
+    WatchContract,
 };
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolConnection;
@@ -1244,51 +1244,27 @@ impl<'a> StorageProcessor<'a> {
             None => Ok(0),
         }
     }
-
-    pub async fn update_message_broadcast_times(
+    pub async fn add_message_broadcast_times(
         &mut self,
         instance_id: &Uuid,
         graph_id: &Uuid,
         msg_type: &str,
-        msg_times: i64,
+        add_times: i64,
     ) -> anyhow::Result<()> {
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-        let message_broadcast_info = sqlx::query_as!(
-            MessageBroadcast,
-            "SELECT instance_id AS \"instance_id:Uuid\",
-                    graph_id AS \"graph_id:Uuid\",
-                    msg_type,
-                    msg_times,
-                    created_at,
-                    updated_at
-             FROM message_broadcast
-             WHERE instance_id = ?
-               AND graph_id = ?",
-            instance_id,
-            graph_id
-        )
-        .fetch_optional(self.conn())
-        .await?;
-
-        let created_at = if let Some(message_broadcast_info) = message_broadcast_info {
-            message_broadcast_info.created_at
-        } else {
-            current_time
-        };
         sqlx::query!(
-            "INSERT OR
-             REPLACE INTO message_broadcast (instance_id, graph_id, msg_type, msg_times, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?) ",
+            "INSERT INTO message_broadcast (instance_id, graph_id, msg_type, msg_times, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(instance_id, graph_id, msg_type) DO UPDATE SET updated_at = excluded.updated_at,
+                                                           msg_times  = excluded.msg_times + ?",
             instance_id,
             graph_id,
             msg_type,
-            msg_times,
-            created_at,
-            current_time
-
-        )
-            .execute(self.conn())
-            .await?;
+            add_times,
+            current_time,
+            current_time,
+            add_times
+        ).execute(self.conn()).await?;
         Ok(())
     }
 

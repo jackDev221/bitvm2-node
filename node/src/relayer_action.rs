@@ -130,16 +130,16 @@ pub async fn get_message_broadcast_times(
     Ok(storage_process.get_message_broadcast_times(instance_id, graph_id, msg_type).await?)
 }
 
-pub async fn update_message_broadcast_times(
+pub async fn add_message_broadcast_times(
     local_db: &LocalDB,
     instance_id: &Uuid,
     graph_id: &Uuid,
     msg_type: &str,
-    msg_times: i64,
+    add_times: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut storage_process = local_db.acquire().await?;
     Ok(storage_process
-        .update_message_broadcast_times(instance_id, graph_id, msg_type, msg_times)
+        .add_message_broadcast_times(instance_id, graph_id, msg_type, add_times)
         .await?)
 }
 
@@ -779,12 +779,12 @@ pub async fn scan_withdraw(
         .await?;
         if msg_times < MESSAGE_BROADCAST_MAX_TIMES {
             send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
-            update_message_broadcast_times(
+            add_message_broadcast_times(
                 local_db,
                 &instance_id,
                 &graph_id,
                 &MessageType::KickoffReady.to_string(),
-                msg_times + 1,
+                1,
             )
             .await?;
         }
@@ -871,12 +871,12 @@ pub async fn scan_kickoff(
             });
             if graph_data.msg_times < MESSAGE_BROADCAST_MAX_TIMES {
                 send_to_peer(swarm, GOATMessage::from_typed(Actor::All, &message_content)?)?;
-                update_message_broadcast_times(
+                add_message_broadcast_times(
                     local_db,
                     &graph_data.instance_id,
                     &graph_data.graph_id,
                     &MessageType::KickoffSent.to_string(),
-                    graph_data.msg_times + 1,
+                    1,
                 )
                 .await?;
             }
@@ -939,12 +939,12 @@ pub async fn scan_assert(
                 assert_final_txid: graph_data.assert_final_txid.unwrap(),
             });
             send_to_peer(swarm, GOATMessage::from_typed(Actor::All, &message_content)?)?;
-            update_message_broadcast_times(
+            add_message_broadcast_times(
                 local_db,
                 &graph_data.instance_id,
                 &graph_data.graph_id,
                 "AssertSent",
-                graph_data.msg_times + 1,
+                1,
             )
             .await?;
         }
@@ -1047,6 +1047,14 @@ pub async fn scan_take1(
                     challenge_txid: spent_txid,
                 });
                 send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
+                add_message_broadcast_times(
+                    local_db,
+                    &instance_id,
+                    &graph_id,
+                    &MessageType::ChallengeSent.to_string(),
+                    1,
+                )
+                .await?;
                 // modify graph status and will no longer perform scan-take1 on this graph
                 update_graph_fields(
                     local_db,
@@ -1081,12 +1089,12 @@ pub async fn scan_take1(
                         swarm,
                         GOATMessage::from_typed(Actor::Operator, &message_content)?,
                     )?;
-                    update_message_broadcast_times(
+                    add_message_broadcast_times(
                         local_db,
                         &instance_id,
                         &graph_id,
                         &MessageType::Take1Ready.to_string(),
-                        graph_data.msg_times + 1,
+                        1,
                     )
                     .await?;
                     info!(
@@ -1239,6 +1247,14 @@ pub async fn scan_take2(
                     disprove_txid: spent_txid,
                 });
                 send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
+                add_message_broadcast_times(
+                    local_db,
+                    &instance_id,
+                    &graph_id,
+                    &MessageType::DisproveSent.to_string(),
+                    1,
+                )
+                .await?;
                 update_graph_fields(
                     local_db,
                     graph_id,
@@ -1272,12 +1288,12 @@ pub async fn scan_take2(
                         swarm,
                         GOATMessage::from_typed(Actor::Operator, &message_content)?,
                     )?;
-                    update_message_broadcast_times(
+                    add_message_broadcast_times(
                         local_db,
                         &instance_id,
                         &graph_id,
                         &MessageType::Take2Ready.to_string(),
-                        graph_data.msg_times + 1,
+                        1,
                     )
                     .await?;
                     info!(
