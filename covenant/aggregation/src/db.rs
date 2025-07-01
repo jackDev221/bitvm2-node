@@ -13,7 +13,7 @@ use zkm_sdk::{
 };
 use zkm_verifier::GROTH16_VK_BYTES;
 
-const PROOF_COUNT: u64 = 100;
+const PROOF_COUNT: u64 = 20;
 
 /// An input to the aggregation program.
 ///
@@ -90,7 +90,7 @@ impl Db {
             proof.zkm_version,
             ZKM_CIRCUIT_VERSION,
             "{}",
-            format!(
+            format_args!(
                 "zkMIPS version mismatch, expected {}, actual {}",
                 ZKM_CIRCUIT_VERSION, proof.zkm_version,
             ),
@@ -123,7 +123,7 @@ impl Db {
     }
 
     async fn remove_old_proofs(&self, block_number: u64) -> Result<()> {
-        if block_number % PROOF_COUNT != 0 {
+        if !block_number.is_multiple_of(PROOF_COUNT) {
             return Ok(());
         }
 
@@ -170,7 +170,6 @@ impl Db {
         block_number: u64,
         proof: &ZKMProofWithPublicValues,
         vk: &ZKMVerifyingKey,
-        execution_report: &ExecutionReport,
         proving_duration: Duration,
     ) -> Result<()> {
         assert_eq!(proof.zkm_version, ZKM_CIRCUIT_VERSION);
@@ -184,7 +183,7 @@ impl Db {
             .update_groth16_succ(
                 block_number as i64,
                 (proving_duration.as_secs_f32() * 1000.0) as i64,
-                execution_report.total_instruction_count() as i64,
+                0,
                 &proof_bytes,
                 &public_values_bytes,
                 vk.bytes32(),
