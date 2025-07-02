@@ -599,13 +599,15 @@ impl<'a> StorageProcessor<'a> {
             graph_count_str = format!("{graph_count_str} WHERE {condition_str}");
         }
 
-        graph_query_str = format!("{graph_query_str}
+        graph_query_str = format!(
+            "{graph_query_str}
                                                 ORDER BY
                                                 CASE
                                                    WHEN graph.bridge_out_start_at > 0
                                                    THEN graph.bridge_out_start_at
                                                    ELSE graph.created_at
-                                                END DESC ");
+                                                END DESC "
+        );
         if let Some(limit) = params.limit {
             graph_query_str = format!("{graph_query_str} LIMIT {limit}");
         }
@@ -1267,14 +1269,13 @@ impl<'a> StorageProcessor<'a> {
             "INSERT INTO message_broadcast (instance_id, graph_id, msg_type, msg_times, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(instance_id, graph_id, msg_type) DO UPDATE SET updated_at = excluded.updated_at,
-                                                           msg_times  = excluded.msg_times + ?",
+                                                           msg_times  = message_broadcast.msg_times + excluded.msg_times",
             instance_id,
             graph_id,
             msg_type,
             add_times,
             current_time,
             current_time,
-            add_times
         ).execute(self.conn()).await?;
         Ok(())
     }
