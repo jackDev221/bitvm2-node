@@ -522,7 +522,11 @@ impl<'a> StorageProcessor<'a> {
                                                  graph.bridge_out_from_addr,
                                                  graph.bridge_out_to_addr,
                                                  graph.init_withdraw_txid,
-                                                 graph.created_at,
+                                                 CASE
+                                                     WHEN graph.bridge_out_start_at > 0
+                                                     THEN graph.bridge_out_start_at
+                                                     ELSE graph.created_at
+                                                 END AS created_at,
                                                  graph.updated_at
                                           FROM graph
                                                 INNER JOIN instance ON graph.instance_id = instance.instance_id".to_string();
@@ -595,6 +599,13 @@ impl<'a> StorageProcessor<'a> {
             graph_count_str = format!("{graph_count_str} WHERE {condition_str}");
         }
 
+        graph_query_str = format!("{graph_query_str}
+                                                ORDER BY
+                                                CASE
+                                                   WHEN graph.bridge_out_start_at > 0
+                                                   THEN graph.bridge_out_start_at
+                                                   ELSE graph.created_at
+                                                END DESC ");
         if let Some(limit) = params.limit {
             graph_query_str = format!("{graph_query_str} LIMIT {limit}");
         }
