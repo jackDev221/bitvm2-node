@@ -586,8 +586,6 @@ pub async fn get_graphs(
                 });
             }
         }
-        graph_vec.sort_by(|a, b| b.graph.created_at.cmp(&a.graph.created_at));
-
         let socket_info_map: HashMap<Uuid, (String, i64)> = storage_process
             .get_socket_addr_for_graph_query_proof(
                 &graph_ids,
