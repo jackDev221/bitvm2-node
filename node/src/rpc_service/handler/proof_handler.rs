@@ -49,33 +49,12 @@ pub async fn get_proof(
                 .await?,
         );
         Ok::<Option<Proofs>, Box<dyn std::error::Error>>(Some(Proofs {
-            block_proofs: vec![
-                BlockProofs {
-                    block_number,
-                    block_proof: block_proofs_map.get(&block_number).cloned(),
-                    aggregation_proof: aggregation_proofs_map.get(&block_number).cloned(),
-                    groth16_proof: groth16_proofs_map.get(&block_number).cloned(),
-                }, // BlockProofs {
-                   //     block_number,
-                   //     block_proof: block_proofs_map.get(&block_number).cloned(),
-                   //     aggregation_proof: get_mock_data(
-                   //         &app_state.local_db,
-                   //         block_number,
-                   //         block_proofs_map.get(&block_number),
-                   //         15000,
-                   //         false,
-                   //     )
-                   //     .await?,
-                   //     groth16_proof: get_mock_data(
-                   //         &app_state.local_db,
-                   //         block_number,
-                   //         block_proofs_map.get(&block_number),
-                   //         20000,
-                   //         true,
-                   //     )
-                   //     .await?,
-                   // },
-            ],
+            block_proofs: vec![BlockProofs {
+                block_number,
+                block_proof: block_proofs_map.get(&block_number).cloned(),
+                aggregation_proof: aggregation_proofs_map.get(&block_number).cloned(),
+                groth16_proof: groth16_proofs_map.get(&block_number).cloned(),
+            }],
         }))
     };
     match async_fn().await {
@@ -161,27 +140,6 @@ pub async fn get_proofs(
                 aggregation_proof: aggregation_proofs_map.get(&block_number).cloned(),
                 groth16_proof: groth16_proofs_map.get(&block_number).cloned(),
             })
-
-            // block_proofs.push(BlockProofs {
-            //     block_number,
-            //     block_proof: block_proofs_map.get(&block_number).cloned(),
-            //     aggregation_proof: get_mock_data(
-            //         &app_state.local_db,
-            //         block_number,
-            //         block_proofs_map.get(&block_number),
-            //         15000,
-            //         false,
-            //     )
-            //     .await?,
-            //     groth16_proof: get_mock_data(
-            //         &app_state.local_db,
-            //         block_number,
-            //         block_proofs_map.get(&block_number),
-            //         20000,
-            //         true,
-            //     )
-            //     .await?,
-            // })
         }
 
         Ok::<Option<Proofs>, Box<dyn std::error::Error>>(Some(Proofs { block_proofs }))
@@ -286,26 +244,3 @@ async fn get_online_operator_url(local_db: &LocalDB) -> anyhow::Result<String> {
     nodes.sort_by_key(|v| v.created_at);
     Ok(nodes[0].socket_addr.clone())
 }
-
-// async fn get_mock_data(
-//     local_db: &LocalDB,
-//     block_number: i64,
-//     proof_item: Option<&ProofItem>,
-//     time_cast: i64,
-//     is_for_groth16: bool,
-// ) -> anyhow::Result<Option<ProofItem>> {
-//     if proof_item.is_none() {
-//         return Ok(None);
-//     }
-//     let is_mock = if is_for_groth16 {
-//         let mut storage_processor = local_db.acquire().await?;
-//         let is_skip = storage_processor
-//             .skip_groth16_proof(block_number, &GoatTxType::ProceedWithdraw.to_string())
-//             .await?;
-//         !is_skip
-//     } else {
-//         true
-//     };
-//
-//     if is_mock { Ok(Some(proof_item.unwrap().create_mock_data(time_cast))) } else { Ok(None) }
-// }
