@@ -231,15 +231,22 @@ impl Bitvm2Graph {
             outpoint: OutPoint { txid: kickoff_txid, vout: take1_input_2_vout as u32 },
             amount: kickoff.tx().output[take1_input_2_vout].value,
         };
+        let take1_input_3_vout: usize = 2;
+        let take1_input_3 = Input {
+            outpoint: OutPoint { txid: kickoff_txid, vout: take1_input_3_vout as u32 },
+            amount: kickoff.tx().output[take1_input_3_vout].value,
+        };
         let take1 = Take1Transaction::new_for_validation(
             network,
             &operator_pubkey,
             &connector_0,
             &connector_3,
             &connector_a,
+            &connector_b,
             take1_input_0,
             take1_input_1,
             take1_input_2,
+            take1_input_3,
         );
 
         // challenge
@@ -421,8 +428,7 @@ pub mod node_serializer {
         use super::*;
         use crate::types::WotsPublicKeys;
         use bitvm::chunk::api::{NUM_HASH, NUM_PUBS, NUM_U256};
-        use bitvm::signatures::signing_winternitz::WinternitzPublicKey;
-        use bitvm::signatures::wots_api::{wots_hash, wots256};
+        use bitvm::signatures::{Wots, Wots16, Wots32, signing_winternitz::WinternitzPublicKey};
         use goat::commitments::NUM_KICKOFF;
         use std::collections::HashMap;
 
@@ -468,8 +474,8 @@ pub mod node_serializer {
             let pubkeys_map: HashMap<u32, Vec<Vec<u8>>> =
                 bincode::deserialize(&map_vec).map_err(serde::de::Error::custom)?;
 
-            const W256_LEN: usize = wots256::N_DIGITS as usize;
-            const WHASH_LEN: usize = wots_hash::N_DIGITS as usize;
+            const W256_LEN: usize = Wots32::TOTAL_DIGIT_LEN as usize;
+            const WHASH_LEN: usize = Wots16::TOTAL_DIGIT_LEN as usize;
 
             let mut pk0 = Vec::with_capacity(NUM_PUBS);
             let (min, max) = (0, NUM_PUBS);
@@ -491,7 +497,7 @@ pub mod node_serializer {
 
                 pk0.push(res);
             }
-            let pk0: [wots256::PublicKey; NUM_PUBS] = pk0
+            let pk0: [<Wots32 as Wots>::PublicKey; NUM_PUBS] = pk0
                 .try_into()
                 .map_err(|_| serde::de::Error::custom("groth16pk.pub size mismatch"))?;
 
@@ -515,7 +521,7 @@ pub mod node_serializer {
 
                 pk1.push(res);
             }
-            let pk1: [wots256::PublicKey; NUM_U256] = pk1
+            let pk1: [<Wots32 as Wots>::PublicKey; NUM_U256] = pk1
                 .try_into()
                 .map_err(|_| serde::de::Error::custom("groth16pk.wots256 size mismatch"))?;
 
@@ -539,7 +545,7 @@ pub mod node_serializer {
 
                 pk2.push(res);
             }
-            let pk2: [wots_hash::PublicKey; NUM_HASH] = pk2
+            let pk2: [<Wots16 as Wots>::PublicKey; NUM_HASH] = pk2
                 .try_into()
                 .map_err(|_| serde::de::Error::custom("groth16pk.wots_hash size mismatch"))?;
 

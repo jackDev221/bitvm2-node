@@ -14,6 +14,7 @@ pub struct Node {
     pub goat_addr: String,
     pub btc_pub_key: String,
     pub socket_addr: String,
+    pub reward: i64,
     pub updated_at: i64,
     pub created_at: i64,
 }
@@ -475,6 +476,7 @@ pub struct GraphTickActionMetaData {
     pub assert_init_txid: Option<String>,
     pub assert_commit_txids: Option<String>,
     pub assert_final_txid: Option<String>,
+    pub challenge_txid: Option<String>,
 }
 
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
@@ -650,6 +652,7 @@ pub enum GoatTxProveStatus {
     NoNeed,
     Pending,
     Proved,
+    Failed,
 }
 
 impl FromStr for GoatTxProveStatus {
@@ -659,6 +662,7 @@ impl FromStr for GoatTxProveStatus {
             "NoNeed" => Ok(GoatTxProveStatus::NoNeed),
             "Pending" => Ok(GoatTxProveStatus::Pending),
             "Proved" => Ok(GoatTxProveStatus::Proved),
+            "Failed" => Ok(GoatTxProveStatus::Failed),
             _ => Err(()),
         }
     }
@@ -681,6 +685,11 @@ pub struct GoatTxRecord {
     pub prove_status: String,
     pub extra: Option<String>,
     pub created_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct GoatTxProceedWithdrawExtra {
+    pub challenge_txid: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]

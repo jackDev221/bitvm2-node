@@ -1,5 +1,5 @@
 use crate::env::{CHEKSIG_P2WSH_INPUT_VBYTES, PEGIN_BASE_VBYTES};
-use crate::rpc_service::handler::bitvm2_handler::reflect_goat_address;
+use crate::utils::reflect_goat_address;
 use alloy::hex::ToHexExt;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::consensus::encode::serialize_hex;
@@ -198,7 +198,7 @@ pub struct GraphListResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub struct GrapRpcQueryData {
+pub struct GraphRpcQueryData {
     pub graph_id: Uuid,
     pub instance_id: Uuid,
     pub bridge_path: u8,
@@ -226,7 +226,7 @@ pub struct GrapRpcQueryData {
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct GraphRpcQueryDataWrap {
-    pub graph: GrapRpcQueryData,
+    pub graph: GraphRpcQueryData,
     pub confirmations: u32,
     pub target_confirmations: u32,
 }

@@ -4,7 +4,7 @@ use crate::action::{ChallengeSent, CreateInstance, DisproveSent};
 use crate::client::chain::chain_adaptor::WithdrawStatus;
 use crate::client::graph_query::{
     BlockRange, CancelWithdrawEvent, GatewayEventEntity, InitWithdrawEvent, ProceedWithdrawEvent,
-    UserGraphWithdrawEvent, get_gateway_events_query,
+    UserGraphWithdrawEvent, WithdrawDisproved, WithdrawPathsEvent, get_gateway_events_query,
 };
 use crate::client::{BTCClient, GOATClient, GraphQueryClient};
 use crate::env::{
@@ -14,7 +14,7 @@ use crate::env::{
 use crate::rpc_service::{P2pUserData, current_time_secs};
 use crate::utils::{
     create_goat_tx_record, finish_withdraw_disproved, obsolete_sibling_graphs, outpoint_spent_txid,
-    strip_hex_prefix_owned, update_graph_fields,
+    reflect_goat_address, strip_hex_prefix_owned, update_graph_fields,
 };
 use crate::{
     action::{
@@ -61,6 +61,7 @@ pub struct GraphTickActionData {
     pub assert_init_txid: Option<Txid>,
     pub assert_commit_txids: Option<[Txid; COMMIT_TX_NUM]>,
     pub assert_final_txid: Option<Txid>,
+    pub challenge_txid: Option<Txid>,
 }
 
 impl From<GraphTickActionMetaData> for GraphTickActionData {
@@ -101,6 +102,7 @@ impl From<GraphTickActionMetaData> for GraphTickActionData {
             assert_init_txid: tx_convert(value.assert_init_txid),
             assert_commit_txids,
             assert_final_txid: tx_convert(value.assert_final_txid),
+            challenge_txid: tx_convert(value.challenge_txid),
         }
     }
 }
@@ -128,16 +130,16 @@ pub async fn get_message_broadcast_times(
     Ok(storage_process.get_message_broadcast_times(instance_id, graph_id, msg_type).await?)
 }
 
-pub async fn update_message_broadcast_times(
+pub async fn add_message_broadcast_times(
     local_db: &LocalDB,
     instance_id: &Uuid,
     graph_id: &Uuid,
     msg_type: &str,
-    msg_times: i64,
+    add_times: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut storage_process = local_db.acquire().await?;
     Ok(storage_process
-        .update_message_broadcast_times(instance_id, graph_id, msg_type, msg_times)
+        .add_message_broadcast_times(instance_id, graph_id, msg_type, add_times)
         .await?)
 }
 
@@ -166,6 +168,8 @@ pub async fn fetch_and_handle_block_range_events<'a>(
     let mut init_withdraw_events: Vec<InitWithdrawEvent> = vec![];
     let mut cancel_withdraw_events = vec![];
     let mut proceed_withdraw_events: Vec<ProceedWithdrawEvent> = vec![];
+    let mut withdraw_paths_events: Vec<WithdrawPathsEvent> = vec![];
+    let mut withdraw_disproved_events: Vec<WithdrawDisproved> = vec![];
     for event_entity in event_entities {
         let entity = event_entity.clone();
         if let Some(value_vec) = query_res[entity.to_string()].as_array() {
@@ -182,17 +186,33 @@ pub async fn fetch_and_handle_block_range_events<'a>(
                     proceed_withdraw_events =
                         serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
                 }
+                GatewayEventEntity::WithdrawHappyPaths
+                | GatewayEventEntity::WithdrawUnhappyPaths => {
+                    let mut events: Vec<WithdrawPathsEvent> =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                    withdraw_paths_events.append(&mut events);
+                }
+                GatewayEventEntity::WithdrawDisproveds => {
+                    withdraw_disproved_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
             };
         }
     }
     info!(
-        "get user init withdraw events: {}, cancel withdraw events: {}, block range {from_height}:{to_height}",
+        "get user init withdraw events: {}, cancel withdraw events: {}, proceed_withdraw_events:{}, \
+         withdraw_paths_events:{},  withdraw_disproved_events:{},  block range {from_height}:{to_height}",
         init_withdraw_events.len(),
-        cancel_withdraw_events.len()
+        cancel_withdraw_events.len(),
+        proceed_withdraw_events.len(),
+        withdraw_paths_events.len(),
+        withdraw_disproved_events.len(),
     );
     handle_user_withdraw_events(storage_processor, init_withdraw_events, cancel_withdraw_events)
         .await?;
     handle_proceed_withdraw_events(storage_processor, proceed_withdraw_events).await?;
+    handle_withdraw_paths_events(storage_processor, withdraw_paths_events).await?;
+    handle_withdraw_disproved_events(storage_processor, withdraw_disproved_events).await?;
     Ok(())
 }
 
@@ -255,11 +275,65 @@ async fn handle_proceed_withdraw_events<'a>(
                 tx_hash: event.transaction_hash,
                 height: event.block_number.parse::<i64>()?,
                 is_local: false,
-                prove_status: GoatTxProveStatus::Pending.to_string(),
-                extra: Some(event.kickoff_txid),
+                prove_status: GoatTxProveStatus::NoNeed.to_string(),
+                extra: None,
                 created_at: current_time_secs(),
             })
             .await?
+    }
+    Ok(())
+}
+
+async fn handle_withdraw_paths_events<'a>(
+    storage_processor: &mut StorageProcessor<'a>,
+    withdraw_paths_events: Vec<WithdrawPathsEvent>,
+) -> Result<(), Box<dyn Error>> {
+    for event in withdraw_paths_events {
+        let reward_add: i64 = event.reward_amount_sats.parse::<i64>()?;
+        let (flag, goat_addr) = reflect_goat_address(Some(event.operator_addr.clone()));
+        if !flag {
+            warn!(
+                "handle_withdraw_paths_events failed as cast operator address failed, detail: {}, {}",
+                event.transaction_hash, event.operator_addr
+            );
+            continue;
+        }
+
+        storage_processor.add_node_reward_by_addr(&goat_addr.unwrap(), reward_add).await?;
+    }
+    Ok(())
+}
+
+async fn handle_withdraw_disproved_events<'a>(
+    storage_processor: &mut StorageProcessor<'a>,
+    withdraw_disproved_events: Vec<WithdrawDisproved>,
+) -> Result<(), Box<dyn Error>> {
+    for event in withdraw_disproved_events {
+        let challenger_reward_add: i64 = event.challenger_amount_sats.parse::<i64>()?;
+        let disprover_reward_add: i64 = event.disprover_amount_sats.parse::<i64>()?;
+        let (flag, challenger_addr) = reflect_goat_address(Some(event.challenger_addr.clone()));
+        if !flag {
+            warn!(
+                "handle_withdraw_disproved_events failed as cast challenger address failed, detail: {}, {}",
+                event.transaction_hash, event.challenger_addr
+            );
+            continue;
+        }
+        let (flag, disprover_addr) = reflect_goat_address(Some(event.disprover_addr.clone()));
+        if !flag {
+            warn!(
+                "handle_withdraw_disproved_events failed as cast disprover address failed, detail: {}, {}",
+                event.transaction_hash, event.disprover_addr
+            );
+            continue;
+        }
+
+        storage_processor
+            .add_node_reward_by_addr(&challenger_addr.unwrap(), challenger_reward_add)
+            .await?;
+        storage_processor
+            .add_node_reward_by_addr(&disprover_addr.unwrap(), disprover_reward_add)
+            .await?;
     }
     Ok(())
 }
@@ -285,12 +359,12 @@ pub async fn fetch_history_events(
                 continue;
             }
             let current_finalized = current_finalized?;
-            if watch_contract.from_height >= current_finalized {
+            if watch_contract.from_height > current_finalized {
                 info!(
-                    "Not need to fetch history events, as current finalize height: {current_finalized} is litter than watch from height: {}",
+                    "fetch history events will finish, as current finalize height: {current_finalized} is litter than watch from height: {}",
                     watch_contract.from_height,
                 );
-                break;
+                continue;
             }
 
             let to_height = current_finalized.min(watch_contract.from_height + watch_contract.gap);
@@ -324,7 +398,6 @@ pub async fn fetch_history_events(
         }
         Ok::<(), Box<dyn std::error::Error>>(())
     };
-    // FIXME latter
     let err = match async_fn().await {
         Ok(_) => false,
         Err(err) => {
@@ -706,12 +779,12 @@ pub async fn scan_withdraw(
         .await?;
         if msg_times < MESSAGE_BROADCAST_MAX_TIMES {
             send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
-            update_message_broadcast_times(
+            add_message_broadcast_times(
                 local_db,
                 &instance_id,
                 &graph_id,
                 &MessageType::KickoffReady.to_string(),
-                msg_times + 1,
+                1,
             )
             .await?;
         }
@@ -769,7 +842,7 @@ pub async fn scan_kickoff(
                         instance_id,
                         &tx_hash,
                         GoatTxType::ProceedWithdraw,
-                        GoatTxProveStatus::Pending.to_string(),
+                        GoatTxProveStatus::NoNeed.to_string(),
                     )
                     .await?;
 
@@ -798,12 +871,12 @@ pub async fn scan_kickoff(
             });
             if graph_data.msg_times < MESSAGE_BROADCAST_MAX_TIMES {
                 send_to_peer(swarm, GOATMessage::from_typed(Actor::All, &message_content)?)?;
-                update_message_broadcast_times(
+                add_message_broadcast_times(
                     local_db,
                     &graph_data.instance_id,
                     &graph_data.graph_id,
                     &MessageType::KickoffSent.to_string(),
-                    graph_data.msg_times + 1,
+                    1,
                 )
                 .await?;
             }
@@ -866,12 +939,12 @@ pub async fn scan_assert(
                 assert_final_txid: graph_data.assert_final_txid.unwrap(),
             });
             send_to_peer(swarm, GOATMessage::from_typed(Actor::All, &message_content)?)?;
-            update_message_broadcast_times(
+            add_message_broadcast_times(
                 local_db,
                 &graph_data.instance_id,
                 &graph_data.graph_id,
                 "AssertSent",
-                graph_data.msg_times + 1,
+                1,
             )
             .await?;
         }
@@ -974,6 +1047,14 @@ pub async fn scan_take1(
                     challenge_txid: spent_txid,
                 });
                 send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
+                add_message_broadcast_times(
+                    local_db,
+                    &instance_id,
+                    &graph_id,
+                    &MessageType::ChallengeSent.to_string(),
+                    1,
+                )
+                .await?;
                 // modify graph status and will no longer perform scan-take1 on this graph
                 update_graph_fields(
                     local_db,
@@ -988,6 +1069,10 @@ pub async fn scan_take1(
             }
             // if take-1/challenge already sent, no need for Take1Ready
             continue;
+        } else {
+            info!(
+                "graph_id:{graph_id}, kickoff_txid: {kickoff_txid} output index 1 not been spent"
+            );
         }
         if graph_data.msg_times < MESSAGE_BROADCAST_MAX_TIMES {
             // check if kickoff's timelock for take1 is expired
@@ -1004,12 +1089,12 @@ pub async fn scan_take1(
                         swarm,
                         GOATMessage::from_typed(Actor::Operator, &message_content)?,
                     )?;
-                    update_message_broadcast_times(
+                    add_message_broadcast_times(
                         local_db,
                         &instance_id,
                         &graph_id,
                         &MessageType::Take1Ready.to_string(),
-                        graph_data.msg_times + 1,
+                        1,
                     )
                     .await?;
                     info!(
@@ -1059,6 +1144,7 @@ pub async fn scan_take2(
         }
         let take2_txid = graph_data.take2_txid.unwrap();
         let assert_final_txid = graph_data.assert_final_txid.unwrap();
+        let kickoff_txid = graph_data.kickoff_txid.unwrap();
         if let Some(spent_txid) = outpoint_spent_txid(btc_client, &assert_final_txid, 1).await? {
             if spent_txid == take2_txid {
                 // take2 sent, try to call finish_withdraw_unhappy_path
@@ -1117,11 +1203,30 @@ pub async fn scan_take2(
                     None,
                 )
                 .await?;
+
+                let challenge_txid = if graph_data.challenge_txid.is_none() {
+                    if let Some(spent_txid) =
+                        outpoint_spent_txid(btc_client, &kickoff_txid, 1).await?
+                        && spent_txid != graph_data.take1_txid.unwrap()
+                    {
+                        spent_txid
+                    } else {
+                        warn!(
+                            "graph:{} challenge tx_id is none, can not start withdraw disproved, fix me",
+                            graph_data.graph_id
+                        );
+                        continue;
+                    }
+                } else {
+                    graph_data.challenge_txid.unwrap()
+                };
+
                 let tx_hash = finish_withdraw_disproved(
                     btc_client,
                     goat_client,
                     &graph_id,
                     &btc_client.fetch_btc_tx(&disprove_txid).await?,
+                    &btc_client.fetch_btc_tx(&challenge_txid).await?,
                 )
                 .await?;
 
@@ -1142,6 +1247,14 @@ pub async fn scan_take2(
                     disprove_txid: spent_txid,
                 });
                 send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
+                add_message_broadcast_times(
+                    local_db,
+                    &instance_id,
+                    &graph_id,
+                    &MessageType::DisproveSent.to_string(),
+                    1,
+                )
+                .await?;
                 update_graph_fields(
                     local_db,
                     graph_id,
@@ -1155,6 +1268,10 @@ pub async fn scan_take2(
             }
             // if take-2/disprove already sent, no need for Take2Ready
             continue;
+        } else {
+            info!(
+                "graph_id:{graph_id}, assert_final_txid: {assert_final_txid} output index 1 not been spent"
+            );
         }
         if graph_data.msg_times < MESSAGE_BROADCAST_MAX_TIMES {
             // check if assert_final's timelock for take2 is expired
@@ -1171,12 +1288,12 @@ pub async fn scan_take2(
                         swarm,
                         GOATMessage::from_typed(Actor::Operator, &message_content)?,
                     )?;
-                    update_message_broadcast_times(
+                    add_message_broadcast_times(
                         local_db,
                         &instance_id,
                         &graph_id,
                         &MessageType::Take2Ready.to_string(),
-                        graph_data.msg_times + 1,
+                        1,
                     )
                     .await?;
                     info!(

@@ -1,4 +1,6 @@
-use crate::action::{CreateGraphPrepare, GOATMessage, GOATMessageContent, NodeInfo, send_to_peer};
+use crate::action::{
+    ChallengeSent, CreateGraphPrepare, GOATMessage, GOATMessageContent, NodeInfo, send_to_peer,
+};
 use crate::client::chain::chain_adaptor::WithdrawStatus;
 use crate::client::chain::utils::{
     get_graph_ids_by_instance_id, validate_committee, validate_operator, validate_relayer,
@@ -10,9 +12,10 @@ use crate::env::*;
 use crate::middleware::AllBehaviours;
 use crate::relayer_action::monitor_events;
 use crate::rpc_service::current_time_secs;
+use alloy::primitives::Address as EvmAddress;
 use alloy::providers::ProviderBuilder;
 use ark_serialize::CanonicalDeserialize;
-use bitcoin::consensus::encode::serialize_hex;
+use bitcoin::consensus::encode::{deserialize_hex, serialize_hex};
 use bitcoin::key::Keypair;
 use bitcoin::{
     Address, Amount, CompressedPublicKey, EcdsaSighashType, Network, OutPoint, PrivateKey,
@@ -34,6 +37,7 @@ use goat::commitments::CommitmentMessageId;
 use goat::connectors::base::TaprootConnector;
 use goat::connectors::connector_6::Connector6;
 use goat::constants::{CONNECTOR_3_TIMELOCK, CONNECTOR_4_TIMELOCK};
+use goat::scripts::{generate_burn_script_address, generate_opreturn_script};
 use goat::transactions::assert::utils::COMMIT_TX_NUM;
 use goat::transactions::base::Input;
 use goat::transactions::pre_signed::PreSignedTransaction;
@@ -55,8 +59,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
 use store::{
-    BridgeInStatus, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus, Node,
-    ProofWithPis,
+    BridgeInStatus, GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph,
+    GraphStatus, Node, ProofWithPis,
 };
 use stun_client::{Attribute, Class, Client};
 use tracing::warn;
@@ -246,23 +250,21 @@ pub async fn select_operator_inputs(
 /// If cache file does not exist, generate partial scripts by vk an cache it
 pub async fn get_partial_scripts(
     local_db: &LocalDB,
-) -> Result<Vec<Script>, Box<dyn std::error::Error>> {
+) -> Result<Vec<ScriptBuf>, Box<dyn std::error::Error>> {
     let scripts_cache_path = SCRIPT_CACHE_FILE_NAME;
     if Path::new(scripts_cache_path).exists() {
         let file = File::open(scripts_cache_path)?;
         let reader = BufReader::new(file);
         let scripts_bytes: Vec<ScriptBuf> = bincode::deserialize_from(reader)?;
-        Ok(scripts_bytes.into_iter().map(|x| script! {}.push_script(x)).collect())
+        Ok(scripts_bytes)
     } else {
         let partial_scripts = generate_partial_scripts(&get_vk(local_db).await?);
         if let Some(parent) = Path::new(scripts_cache_path).parent() {
             fs::create_dir_all(parent)?;
         };
         let file = File::create(scripts_cache_path)?;
-        let scripts_bytes: Vec<ScriptBuf> =
-            partial_scripts.iter().map(|scr| scr.clone().compile()).collect();
         let writer = BufWriter::new(file);
-        bincode::serialize_into(writer, &scripts_bytes)?;
+        bincode::serialize_into(writer, &partial_scripts)?;
         Ok(partial_scripts)
     }
 }
@@ -438,6 +440,13 @@ pub async fn complete_and_broadcast_challenge_tx(
                     script_sig: ScriptBuf::new(),
                     sequence: Sequence::MAX,
                     witness: Witness::default(),
+                });
+            }
+            if let Some(goat_addr) = get_node_goat_address() {
+                // write challenger’s L2 address to an OP_RETURN output if provided
+                challenge_tx.output.push(TxOut {
+                    script_pubkey: generate_opreturn_script(goat_addr.to_vec()),
+                    value: Amount::ZERO,
                 });
             }
             if change_amount > Amount::from_sat(DUST_AMOUNT) {
@@ -694,7 +703,7 @@ pub async fn validate_assert(
     let proof_sigs = extract_proof_sigs_from_assert_commit_txns(assert_commit_txns)?;
     let disprove_scripts =
         generate_disprove_scripts(&get_partial_scripts(local_db).await?, &wots_pubkeys);
-    let disprove_scripts: [Script; NUM_TAPS] =
+    let disprove_scripts: [ScriptBuf; NUM_TAPS] =
         disprove_scripts.try_into().map_err(|_| "disprove script num mismatch")?;
     Ok(verify_proof(&get_vk(local_db).await?, proof_sigs, &disprove_scripts, &wots_pubkeys))
 }
@@ -707,26 +716,41 @@ pub async fn get_groth16_proof(
     local_db: &LocalDB,
     instance_id: &Uuid,
     graph_id: &Uuid,
+    challenge_txid: String,
 ) -> Result<(Groth16Proof, PublicInputs, VerifyingKey), Box<dyn std::error::Error>> {
     if cfg!(all(feature = "tests", feature = "e2e-tests")) {
         return get_test_groth16_proof();
     }
-    let mut db_lock = local_db.acquire().await?;
-    let tx_record_op = db_lock
-        .get_graph_goat_tx_record(graph_id, &GoatTxType::ProceedWithdraw.to_string())
-        .await?;
-    if tx_record_op.is_none() {
-        return Err(
-            format!("instance_id:{instance_id}, graph_id:{graph_id} not find goat tx!").into()
-        );
-    }
-    let (proof, pis, vk, version) =
-        groth16::get_groth16_proof(local_db, tx_record_op.unwrap().height as u64).await?;
 
-    tracing::info!(
-        "instance_id:{instance_id}, graph_id:{graph_id} finish get groth16 proof at version: {version}"
-    );
-    Ok((proof, pis, vk))
+    let mut storage_processor = local_db.acquire().await?;
+    if let Some(tx_record) = storage_processor
+        .get_graph_goat_tx_record(graph_id, &GoatTxType::ProceedWithdraw.to_string())
+        .await?
+        && let Ok((proof, pis, vk, version)) =
+            groth16::get_groth16_proof(local_db, tx_record.height as u64).await
+    {
+        tracing::info!(
+            "instance_id:{instance_id}, graph_id:{graph_id} finish get groth16 proof at version: {version}"
+        );
+        Ok((proof, pis, vk))
+    } else {
+        storage_processor
+            .create_or_update_goat_tx_record(&GoatTxRecord {
+                instance_id: *instance_id,
+                graph_id: *graph_id,
+                tx_type: GoatTxType::ProceedWithdraw.to_string(),
+                tx_hash: "".to_string(),
+                height: 0,
+                is_local: false,
+                prove_status: GoatTxProveStatus::Pending.to_string(),
+                extra: Some(
+                    serde_json::to_string(&GoatTxProceedWithdrawExtra { challenge_txid }).unwrap(),
+                ),
+                created_at: 0,
+            })
+            .await?;
+        Err(format!("instance_id:{instance_id}, graph_id:{graph_id} not ready!").into())
+    }
 }
 pub async fn get_vk(db: &LocalDB) -> Result<VerifyingKey, Box<dyn std::error::Error>> {
     if cfg!(all(feature = "tests", feature = "e2e-tests")) {
@@ -816,9 +840,12 @@ pub async fn finish_withdraw_disproved(
     btc_client: &BTCClient,
     goat_client: &GOATClient,
     graph_id: &Uuid,
-    tx: &Transaction,
+    disprove_tx: &Transaction,
+    challenge_tx: &Transaction,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let tx_hash = goat_client.finish_withdraw_disproved(btc_client, graph_id, tx).await?;
+    let tx_hash = goat_client
+        .finish_withdraw_disproved(btc_client, graph_id, disprove_tx, challenge_tx)
+        .await?;
     tracing::info!("graph_id:{} finish disprove, tx_hash: {}", graph_id, tx_hash);
     Ok(tx_hash)
 }
@@ -1079,12 +1106,11 @@ pub async fn update_graph(
 ) -> Result<(), Box<dyn std::error::Error>> {
     store_graph(local_db, instance_id, graph_id, graph, status).await
 }
-
 pub async fn get_graph(
     local_db: &LocalDB,
     instance_id: Uuid,
     graph_id: Uuid,
-) -> Result<Bitvm2Graph, Box<dyn std::error::Error>> {
+) -> Result<Graph, Box<dyn std::error::Error>> {
     let mut storage_process = local_db.acquire().await?;
     let graph_op = storage_process.get_graph(&graph_id).await?;
     if graph_op.is_none() {
@@ -1099,7 +1125,15 @@ pub async fn get_graph(
         )
         .into());
     }
+    Ok(graph)
+}
 
+pub async fn get_bitvm2_graph_from_db(
+    local_db: &LocalDB,
+    instance_id: Uuid,
+    graph_id: Uuid,
+) -> Result<Bitvm2Graph, Box<dyn std::error::Error>> {
+    let graph = get_graph(local_db, instance_id, graph_id).await?;
     if graph.raw_data.is_none() {
         return Err(format!("grap with graph_id:{graph_id} raw data is none").into());
     }
@@ -1327,6 +1361,7 @@ pub async fn save_node_info(
             goat_addr: node_info.goat_addr.clone(),
             btc_pub_key: node_info.btc_pub_key.clone(),
             socket_addr: node_info.socket_addr.clone(),
+            reward: 0,
             updated_at: current_time,
             created_at: current_time,
         })
@@ -1458,6 +1493,9 @@ pub async fn run_watch_event_task(
                     GatewayEventEntity::InitWithdraws,
                     GatewayEventEntity::CancelWithdraws,
                     GatewayEventEntity::ProceedWithdraws,
+                    GatewayEventEntity::WithdrawHappyPaths,
+                    GatewayEventEntity::WithdrawUnhappyPaths,
+                    GatewayEventEntity::WithdrawDisproveds,
                 ],
             )
             .await
@@ -1497,7 +1535,7 @@ pub async fn run_gen_groth16_proof_task(
         let tx_records = {
             let mut storage_processor = local_db.acquire().await?;
             storage_processor
-                .get_goat_tx_record_need_proving(
+                .get_goat_tx_record_by_prove_status(
                     &GoatTxType::ProceedWithdraw.to_string(),
                     &GoatTxProveStatus::Pending.to_string(),
                 )
@@ -1573,4 +1611,96 @@ pub async fn set_node_external_socket_addr_env(rpc_addr: &str) -> anyhow::Result
         }
     }
     Ok(())
+}
+// TODO
+pub fn get_fixed_disprove_output() -> Result<TxOut, Box<dyn std::error::Error>> {
+    Ok(TxOut {
+        script_pubkey: generate_burn_script_address(get_network()).script_pubkey(),
+        value: Amount::from_sat(DUST_AMOUNT),
+    })
+}
+
+pub fn reflect_goat_address(addr_op: Option<String>) -> (bool, Option<String>) {
+    if let Some(addr) = addr_op
+        && let Ok(addr) = EvmAddress::from_str(&addr)
+    {
+        return (true, Some(addr.to_string()));
+    }
+
+    (false, None)
+}
+
+pub async fn operator_scan_ready_proof(
+    local_db: &LocalDB,
+) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+    tracing::info!("start operator_scan_ready_proof");
+    let mut storage_proccessor = local_db.acquire().await?;
+    let check_txs = storage_proccessor
+        .get_goat_tx_record_by_prove_status(
+            &GoatTxType::ProceedWithdraw.to_string(),
+            &GoatTxProveStatus::Pending.to_string(),
+        )
+        .await?;
+
+    let parse_challenge_txid_fn =
+        |extra_data: Option<String>| -> Result<Txid, Box<dyn std::error::Error>> {
+            if extra_data.is_none() {
+                return Err("extra data is none".into());
+            }
+            let extra: GoatTxProceedWithdrawExtra = serde_json::from_str(&extra_data.unwrap())?;
+            Ok(deserialize_hex(&extra.challenge_txid)?)
+        };
+
+    let mut message_content: Option<GOATMessageContent> = None;
+    for tx in check_txs {
+        if tx.height == 0 {
+            tracing::info!("Graph id :{} proceed withdraw tx online just waiting", tx.graph_id);
+            continue;
+        }
+        let challenge_txid_res = parse_challenge_txid_fn(tx.extra.clone());
+        if let Ok(challenge_txid) = challenge_txid_res {
+            let (proof, _, _, _) = storage_proccessor.get_groth16_proof(tx.height).await?;
+            if proof.is_empty() {
+                tracing::info!("Graph id :{} proof is empty just waiting", tx.graph_id);
+                continue;
+            }
+            tracing::info!("Graph id :{} proof is ready", tx.graph_id);
+            message_content = Some(GOATMessageContent::ChallengeSent(ChallengeSent {
+                instance_id: tx.instance_id,
+                graph_id: tx.graph_id,
+                challenge_txid,
+            }));
+            storage_proccessor
+                .update_goat_tx_record_prove_status(
+                    &tx.graph_id,
+                    &tx.instance_id,
+                    &tx.tx_type,
+                    &GoatTxProveStatus::Proved.to_string(),
+                )
+                .await?;
+        } else {
+            warn!(
+                "Graph id :{} proceed withdraw tx extra parse fail, error:{:?}",
+                tx.graph_id,
+                challenge_txid_res.err()
+            );
+            storage_proccessor
+                .update_goat_tx_record_prove_status(
+                    &tx.graph_id,
+                    &tx.instance_id,
+                    &tx.tx_type,
+                    &GoatTxProveStatus::Failed.to_string(),
+                )
+                .await?;
+        }
+        if message_content.is_some() {
+            break;
+        }
+    }
+    if message_content.is_none() {
+        Ok(None)
+    } else {
+        let message = GOATMessage::from_typed(Actor::Operator, &message_content.unwrap())?;
+        Ok(Some(serde_json::to_vec(&message)?))
+    }
 }

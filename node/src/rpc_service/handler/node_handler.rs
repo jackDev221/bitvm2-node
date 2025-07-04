@@ -1,9 +1,9 @@
-use crate::rpc_service::handler::bitvm2_handler::reflect_goat_address;
 use crate::rpc_service::node::{
     ALIVE_TIME_JUDGE_THRESHOLD, NodeDesc, NodeListResponse, NodeOverViewResponse, NodeQueryParams,
     UpdateOrInsertNodeRequest,
 };
 use crate::rpc_service::{AppState, current_time_secs};
+use crate::utils::reflect_goat_address;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use bitvm2_lib::actors::Actor;
@@ -24,6 +24,7 @@ pub async fn create_node(
             goat_addr: payload.goat_addr.clone(),
             btc_pub_key: payload.btc_pub_key.clone(),
             socket_addr: payload.socket_addr.clone(),
+            reward: 0,
             updated_at: std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
                 as i64,
             created_at: std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
@@ -85,6 +86,8 @@ pub async fn get_nodes(
                     status,
                     goat_addr: v.goat_addr,
                     btc_pub_key: v.btc_pub_key,
+                    socket_addr: v.socket_addr,
+                    reward: v.reward,
                 }
             })
             .collect();

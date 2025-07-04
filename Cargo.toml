@@ -11,8 +11,8 @@ members = [
 default-members = ["node"]
 
 [workspace.dependencies]
-bitvm = { git = "https://github.com/GOATNetwork/BitVM.git", branch = "goat-test" }
-goat = { git = "https://github.com/GOATNetwork/BitVM.git", branch = "goat-test" }
+bitvm = { git = "https://github.com/GOATNetwork/BitVM.git", branch = "goat-test-dev" }
+goat = { git = "https://github.com/GOATNetwork/BitVM.git", branch = "goat-test-dev" }
 
 libp2p = { version = "0.55.0", features = ["tokio", "dns", "kad", "noise", "tcp", "yamux", "rsa", "ping", "mdns"] }
 libp2p-swarm-derive = "0.35.0"
@@ -21,7 +21,7 @@ libp2p-core = "0.43.0"
 prometheus-client = "0.22.3"
 once_cell = "1.5"
 bitcoin-script = { git = "https://github.com/BitVM/rust-bitcoin-script" }
-bitcoin = { version = "0.32.5", features = ["rand-std"] }
+bitcoin = { version = "0.32.6", features = ["rand-std"] }
 hex = "0.4.3"
 serde = { version = "1.0.197", features = ["derive"] }
 ark-bn254 = { version = "0.5.0", features = ["curve", "scalar_field"], default-features = false }
@@ -52,8 +52,6 @@ uuid = { version = "1.7", features = ["v4", "serde"] }
 zeroize = "1.8.1"
 
 bincode = "1.3.3"
-zkm-build = { git = "https://github.com/zkMIPS/zkMIPS" }
-zkm-core-executor = { git = "https://github.com/zkMIPS/zkMIPS" }
 zkm-prover = { git = "https://github.com/zkMIPS/zkMIPS" }
 zkm-sdk = { git = "https://github.com/zkMIPS/zkMIPS" }
 zkm-verifier = { git = "https://github.com/zkMIPS/zkMIPS", features = ["ark"] }

@@ -192,7 +192,7 @@ pub async fn get_proofs_overview(
 }
 
 fn convert_to_proof_items(
-    input: Vec<(i64, String, i64, i64, String, i64, i64)>,
+    input: Vec<(i64, String, i64, f64, String, i64, i64)>,
 ) -> HashMap<i64, ProofItem> {
     input
         .into_iter()
@@ -228,7 +228,7 @@ fn convert_to_proof_items(
 async fn get_online_operator_url(local_db: &LocalDB) -> anyhow::Result<String> {
     let mut storage_processor = local_db.acquire().await?;
     let time_threshold = current_time_secs() - ALIVE_TIME_JUDGE_THRESHOLD;
-    let (nodes, _) = storage_processor
+    let (mut nodes, _) = storage_processor
         .node_list(
             Some(Actor::Operator.to_string()),
             None,
@@ -241,5 +241,6 @@ async fn get_online_operator_url(local_db: &LocalDB) -> anyhow::Result<String> {
     if nodes.is_empty() {
         bail!("no operator is online")
     }
+    nodes.sort_by_key(|v| v.created_at);
     Ok(nodes[0].socket_addr.clone())
 }

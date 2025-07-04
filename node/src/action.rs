@@ -1,6 +1,7 @@
 use crate::client::{BTCClient, GOATClient};
 use crate::env::{
-    self, SYNC_GRAPH_INTERVAL, SYNC_GRAPH_MAX_WAIT_SECS, get_local_node_info, get_node_pubkey,
+    self, SYNC_GRAPH_INTERVAL, SYNC_GRAPH_MAX_WAIT_SECS, get_local_node_info,
+    get_node_goat_address, get_node_pubkey,
 };
 use crate::middleware::AllBehaviours;
 use crate::relayer_action::do_tick_action;
@@ -9,7 +10,7 @@ use crate::utils::{statics::*, *};
 use crate::{defer, dismiss_defer};
 use anyhow::Result;
 use bitcoin::PublicKey;
-use bitcoin::consensus::encode::serialize_hex;
+use bitcoin::consensus::encode::{deserialize_hex, serialize_hex};
 use bitcoin::{Amount, Network, Txid};
 use bitvm2_lib::actors::Actor;
 use bitvm2_lib::keys::*;
@@ -224,18 +225,33 @@ pub async fn recv_and_dispatch(
     id: MessageId,
     message: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut local_message: Vec<u8> = vec![];
     // Tick
     if id == GOATMessage::default_message_id() {
         tracing::debug!("Get the running task, and broadcast the task status or result");
         if actor == Actor::Relayer {
             do_tick_action(swarm, local_db, btc_client, goat_client).await?;
         }
-        return Ok(());
+        if actor == Actor::Operator
+            && let Some(message) = operator_scan_ready_proof(local_db).await?
+        {
+            local_message = message.clone();
+        } else {
+            return Ok(());
+        }
     }
 
-    update_node_timestamp(local_db, &from_peer_id.to_string()).await?;
+    if local_message.is_empty() {
+        update_node_timestamp(local_db, &from_peer_id.to_string()).await?;
+    }
 
-    let message: GOATMessage = serde_json::from_slice(message)?;
+    let message: GOATMessage = if local_message.is_empty() {
+        serde_json::from_slice(message)?
+    } else {
+        tracing::info!("use local message");
+        serde_json::from_slice(&local_message)?
+    };
+    // let message: GOATMessage = serde_json::from_slice(message)?;
     let content: GOATMessageContent = message.to_typed()?;
     match &content {
         // Make logs more readable
@@ -350,9 +366,11 @@ pub async fn recv_and_dispatch(
                         operator_wots_pubkeys,
                         operator_inputs,
                     };
-                    let disprove_scripts_bytes =
-                        disprove_scripts.iter().map(|x| x.clone().compile().into_bytes()).collect();
-                    let mut graph = generate_bitvm_graph(params, disprove_scripts_bytes)?;
+                    let mut graph = generate_bitvm_graph(
+                        params,
+                        disprove_scripts,
+                        get_fixed_disprove_output()?,
+                    )?;
                     operator_pre_sign(keypair, &mut graph)?;
                     store_graph(
                         local_db,
@@ -426,8 +444,12 @@ pub async fn recv_and_dispatch(
                 committee_members_num
             );
             if collected_pub_nonces.len() == committee_members_num {
-                let graph =
-                    get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                let graph = get_bitvm2_graph_from_db(
+                    local_db,
+                    receive_data.instance_id,
+                    receive_data.graph_id,
+                )
+                .await?;
                 let master_key = CommitteeMasterKey::new(env::get_bitvm_key()?);
                 let keypair = master_key.keypair_for_instance(receive_data.instance_id);
                 let nonces =
@@ -472,8 +494,12 @@ pub async fn recv_and_dispatch(
                 receive_data.committee_members_num
             );
             if collected_pub_nonces.len() == receive_data.committee_members_num {
-                let graph =
-                    get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                let graph = get_bitvm2_graph_from_db(
+                    local_db,
+                    receive_data.instance_id,
+                    receive_data.graph_id,
+                )
+                .await?;
                 let master_key = CommitteeMasterKey::new(env::get_bitvm_key()?);
                 let keypair = master_key.keypair_for_instance(receive_data.instance_id);
                 let nonces =
@@ -534,9 +560,12 @@ pub async fn recv_and_dispatch(
                             grouped_partial_sigs[i].push(sig);
                         }
                     }
-                    let mut graph =
-                        get_graph(local_db, receive_data.instance_id, receive_data.graph_id)
-                            .await?;
+                    let mut graph = get_bitvm2_graph_from_db(
+                        local_db,
+                        receive_data.instance_id,
+                        receive_data.graph_id,
+                    )
+                    .await?;
                     signature_aggregation_and_push(
                         &grouped_partial_sigs,
                         &receive_data.agg_nonces,
@@ -640,7 +669,8 @@ pub async fn recv_and_dispatch(
                 return Ok(());
             }
             let mut graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
             let keypair = master_key.keypair_for_graph(receive_data.graph_id);
             let operator_graph_pubkey: PublicKey = keypair.public_key().into();
@@ -705,7 +735,8 @@ pub async fn recv_and_dispatch(
                 return Ok(());
             }
             let mut graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if should_challenge(
                 btc_client,
                 goat_client,
@@ -786,7 +817,8 @@ pub async fn recv_and_dispatch(
                 return Ok(());
             }
             let mut graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
             let keypair = master_key.keypair_for_graph(receive_data.graph_id);
             let operator_graph_pubkey: PublicKey = keypair.public_key().into();
@@ -866,7 +898,8 @@ pub async fn recv_and_dispatch(
                 return Ok(());
             }
             let mut graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if graph.parameters.operator_pubkey == env::get_node_pubkey()?
                 && validate_challenge(
                     btc_client,
@@ -881,9 +914,13 @@ pub async fn recv_and_dispatch(
                 let keypair = master_key.keypair_for_graph(receive_data.graph_id);
                 let (operator_wots_seckeys, operator_wots_pubkeys) =
                     master_key.wots_keypair_for_graph(receive_data.graph_id);
-                let (proof, pubin, vk) =
-                    get_groth16_proof(local_db, &receive_data.instance_id, &receive_data.graph_id)
-                        .await?;
+                let (proof, pubin, vk) = get_groth16_proof(
+                    local_db,
+                    &receive_data.instance_id,
+                    &receive_data.graph_id,
+                    serialize_hex(&receive_data.challenge_txid),
+                )
+                .await?;
                 let mut proof_sigs = sign_proof(&vk, proof, pubin, &operator_wots_seckeys);
                 if !is_valid_withdraw(goat_client, receive_data.instance_id, receive_data.graph_id)
                     .await?
@@ -948,7 +985,8 @@ pub async fn recv_and_dispatch(
             )
             .await?;
             let mut graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
             let keypair = master_key.keypair_for_graph(receive_data.graph_id);
             let operator_graph_pubkey: PublicKey = keypair.public_key().into();
@@ -1022,7 +1060,8 @@ pub async fn recv_and_dispatch(
                 return Ok(());
             }
             let mut graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if let Some(disprove_witness) = validate_assert(
                 local_db,
                 btc_client,
@@ -1036,16 +1075,15 @@ pub async fn recv_and_dispatch(
                     &get_partial_scripts(local_db).await?,
                     &graph.parameters.operator_wots_pubkeys,
                 );
-                let disprove_scripts_bytes =
-                    disprove_scripts.iter().map(|x| x.clone().compile().into_bytes()).collect();
                 let assert_wots_pubkeys = graph.parameters.operator_wots_pubkeys.1.clone();
                 let fee_rate = get_fee_rate(btc_client).await?;
                 let disprove_tx = sign_disprove(
                     &mut graph,
                     disprove_witness,
-                    disprove_scripts_bytes,
+                    disprove_scripts,
                     &assert_wots_pubkeys,
-                    disprove_reward_address()?,
+                    get_node_goat_address().map(|a| a.0.0),
+                    Some(disprove_reward_address()?),
                     fee_rate,
                 )?;
                 let disprove_txid = disprove_tx.compute_txid();
@@ -1084,7 +1122,8 @@ pub async fn recv_and_dispatch(
         (GOATMessageContent::Take1Sent(receive_data), Actor::Relayer) => {
             tracing::info!("Handle Take1Sent");
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             let take1_txid = graph.take1.tx().compute_txid();
             if tx_on_chain(btc_client, &take1_txid).await? {
                 let tx_hash = finish_withdraw_happy_path(
@@ -1121,7 +1160,8 @@ pub async fn recv_and_dispatch(
         (GOATMessageContent::Take2Sent(receive_data), Actor::Relayer) => {
             tracing::info!("Handle Take2Sent");
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if tx_on_chain(btc_client, &graph.take2.tx().compute_txid()).await? {
                 let tx_hash = finish_withdraw_unhappy_path(
                     btc_client,
@@ -1158,9 +1198,22 @@ pub async fn recv_and_dispatch(
             tracing::info!("Handle DisproveSent");
             let graph =
                 get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+
+            if graph.challenge_txid.is_none() || graph.assert_final_txid.is_none() {
+                tracing::warn!(
+                    "graph_id:{} challenge tx is none or assert final txid is none",
+                    receive_data.graph_id
+                );
+                return Err(format!(
+                    "graph_id:{} challenge tx is none or assert final txid is none",
+                    receive_data.graph_id
+                )
+                .into());
+            }
+
             if validate_disprove(
                 btc_client,
-                &graph.assert_final.tx().compute_txid(),
+                &deserialize_hex(&graph.assert_final_txid.expect("finial assert txid is none"))?,
                 &receive_data.disprove_txid,
             )
             .await?
@@ -1180,6 +1233,11 @@ pub async fn recv_and_dispatch(
                     goat_client,
                     &receive_data.graph_id,
                     &btc_client.fetch_btc_tx(&receive_data.disprove_txid).await?,
+                    &btc_client
+                        .fetch_btc_tx(&deserialize_hex(
+                            &graph.challenge_txid.expect("challenge txid is none"),
+                        )?)
+                        .await?,
                 )
                 .await?;
                 create_goat_tx_record(
@@ -1220,7 +1278,8 @@ pub async fn recv_and_dispatch(
             )
             .await?;
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if tx_on_chain(btc_client, &graph.take1.tx().compute_txid()).await? {
                 update_graph_fields(
                     local_db,
@@ -1248,7 +1307,9 @@ pub async fn recv_and_dispatch(
                         SYNC_GRAPH_MAX_WAIT_SECS,
                     )
                     .await?;
-                    let graph = get_graph(local_db, receive_data.instance_id, graph_id).await?;
+                    let graph =
+                        get_bitvm2_graph_from_db(local_db, receive_data.instance_id, graph_id)
+                            .await?;
                     let prekickoff_txid = graph.pre_kickoff.tx().compute_txid();
                     if outpoint_available(btc_client, &prekickoff_txid, 0).await? {
                         tracing::info!(
@@ -1280,7 +1341,8 @@ pub async fn recv_and_dispatch(
             )
             .await?;
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if tx_on_chain(btc_client, &graph.take2.tx().compute_txid()).await? {
                 update_graph_fields(
                     local_db,
@@ -1308,7 +1370,9 @@ pub async fn recv_and_dispatch(
                         SYNC_GRAPH_MAX_WAIT_SECS,
                     )
                     .await?;
-                    let graph = get_graph(local_db, receive_data.instance_id, graph_id).await?;
+                    let graph =
+                        get_bitvm2_graph_from_db(local_db, receive_data.instance_id, graph_id)
+                            .await?;
                     let prekickoff_txid = graph.pre_kickoff.tx().compute_txid();
                     if outpoint_available(btc_client, &prekickoff_txid, 0).await? {
                         tracing::info!(
@@ -1355,7 +1419,8 @@ pub async fn recv_and_dispatch(
                 return Ok(());
             }
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if tx_on_chain(btc_client, &graph.kickoff.tx().compute_txid()).await? {
                 update_graph_fields(
                     local_db,
@@ -1398,7 +1463,8 @@ pub async fn recv_and_dispatch(
                 return Ok(());
             }
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if validate_challenge(
                 btc_client,
                 &graph.kickoff.tx().compute_txid(),
@@ -1430,7 +1496,8 @@ pub async fn recv_and_dispatch(
             )
             .await?;
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if tx_on_chain(btc_client, &graph.take1.tx().compute_txid()).await? {
                 update_graph_fields(
                     local_db,
@@ -1458,7 +1525,8 @@ pub async fn recv_and_dispatch(
             )
             .await?;
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if tx_on_chain(btc_client, &graph.take2.tx().compute_txid()).await? {
                 update_graph_fields(
                     local_db,
@@ -1486,7 +1554,8 @@ pub async fn recv_and_dispatch(
             )
             .await?;
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             if validate_disprove(
                 btc_client,
                 &graph.assert_final.tx().compute_txid(),
@@ -1521,7 +1590,8 @@ pub async fn recv_and_dispatch(
         (GOATMessageContent::SyncGraphRequest(receive_data), Actor::Relayer) => {
             tracing::info!("Handle SyncGraphRequest...  ");
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_bitvm2_graph_from_db(local_db, receive_data.instance_id, receive_data.graph_id)
+                    .await?;
             let graph_status =
                 get_graph_status(local_db, receive_data.instance_id, receive_data.graph_id)
                     .await?

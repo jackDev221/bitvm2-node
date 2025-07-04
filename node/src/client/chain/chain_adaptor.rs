@@ -18,10 +18,7 @@ pub trait ChainAdaptor: Send + Sync {
         &self,
         instance_id: &Uuid,
         raw_pgin_tx: &BitcoinTx,
-        raw_header: &[u8],
-        height: u64,
-        proof: &[[u8; 32]],
-        index: u64,
+        pegin_proof: &BitcoinTxProof,
     ) -> anyhow::Result<String>;
 
     async fn post_operator_data(
@@ -56,38 +53,28 @@ pub trait ChainAdaptor: Send + Sync {
         &self,
         graph_id: &Uuid,
         raw_kickoff_tx: &BitcoinTx,
-        raw_header: &[u8],
-        height: u64,
-        proof: &[[u8; 32]],
-        index: u64,
+        kickoff_proof: &BitcoinTxProof,
     ) -> anyhow::Result<String>;
     async fn finish_withdraw_happy_path(
         &self,
         graph_id: &Uuid,
         raw_take1_tx: &BitcoinTx,
-        raw_header: &[u8],
-        height: u64,
-        proof: &[[u8; 32]],
-        index: u64,
+        take1_proof: &BitcoinTxProof,
     ) -> anyhow::Result<String>;
     async fn finish_withdraw_unhappy_path(
         &self,
         graph_id: &Uuid,
         raw_take2_tx: &BitcoinTx,
-        raw_header: &[u8],
-        height: u64,
-        proof: &[[u8; 32]],
-        index: u64,
+        take2_proof: &BitcoinTxProof,
     ) -> anyhow::Result<String>;
 
     async fn finish_withdraw_disproved(
         &self,
         graph_id: &Uuid,
         raw_disproved_tx: &BitcoinTx,
-        raw_header: &[u8],
-        height: u64,
-        proof: &[[u8; 32]],
-        index: u64,
+        disproved_proof: &BitcoinTxProof,
+        raw_challenge_tx: &BitcoinTx,
+        challenge_proof: &BitcoinTxProof,
     ) -> anyhow::Result<String>;
 
     async fn verify_merkle_proof(
@@ -99,6 +86,9 @@ pub trait ChainAdaptor: Send + Sync {
     ) -> anyhow::Result<bool>;
 
     async fn get_tx_receipt(&self, tx_hash: &str) -> anyhow::Result<Option<TransactionReceipt>>;
+
+    async fn get_stake_amount_check_info(&self) -> anyhow::Result<(u64, u64)>;
+    async fn get_pegin_fee_check_info(&self) -> anyhow::Result<(u64, u64)>;
 }
 #[derive(Eq, PartialEq, Clone, Copy)]
 pub enum GoatNetwork {
@@ -153,6 +143,12 @@ impl From<u8> for WithdrawStatus {
     }
 }
 
+impl std::fmt::Display for WithdrawStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PeginData {
     pub pegin_txid: [u8; 32],
@@ -190,6 +186,14 @@ pub struct BitcoinTx {
     pub input_vector: Vec<u8>,
     pub output_vector: Vec<u8>,
     pub lock_time: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct BitcoinTxProof {
+    pub raw_header: Vec<u8>,
+    pub height: u64,
+    pub proof: Vec<[u8; 32]>,
+    pub index: u64,
 }
 
 pub fn get_chain_adaptor(
