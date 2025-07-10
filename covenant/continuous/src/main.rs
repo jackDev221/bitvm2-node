@@ -14,7 +14,9 @@ use store::localdb::LocalDB;
 use tokio::{sync::Semaphore, task};
 use tracing::{error, info, instrument, warn};
 use tracing_subscriber::util::SubscriberInitExt;
-use zkm_sdk::{include_elf, ProverClient};
+#[cfg(feature = "common_prover")]
+use zkm_sdk::ProverClient;
+use zkm_sdk::{include_elf, NetworkProver};
 
 mod cli;
 mod db;
@@ -42,7 +44,7 @@ async fn main() -> eyre::Result<()> {
     let (non_blocking, _guard) = tracing_appender::non_blocking(appender);
     tracing_subscriber::fmt()
         .with_env_filter(
-            "continuous=info,host-executor=info,zkm_core_machine=warn,zkm_core_executor=error,zkm_prover=warn",
+            "continuous=info,host-executor=info,zkm_core_machine=warn,zkm_core_executor=error,zkm_prover=warn,zkm-sdk=info",
         )
         .with_writer(non_blocking)
         .with_max_level(tracing::Level::INFO)
@@ -63,10 +65,23 @@ async fn main() -> eyre::Result<()> {
     let http_provider = create_provider(args.provider.rpc_url.unwrap());
     let alerting_client =
         args.pager_duty_integration_key.map(|key| Arc::new(AlertingClient::new(key)));
-    let prover_client = Arc::new(ProverClient::new());
+
+    #[cfg(feature = "common_prover")]
+    let prover_client = {
+        tracing::info!("Use common ProverClient");
+        Arc::new(ProverClient::new())
+    };
+    #[cfg(not(feature = "common_prover"))]
+    let prover_client = {
+        let np = NetworkProver::from_env().map_err(|_| {
+            eyre::eyre!("Failed to create NetworkProver from environment variables")
+        })?;
+        Arc::new(np)
+    };
 
     let executor = Arc::new(
-        FullExecutor::<EthExecutorComponents<_>, _>::try_new(
+        FullExecutor::<EthExecutorComponents<_, _>, _>::try_new(
+            http_provider.clone(),
             http_provider,
             elf,
             block_execution_strategy_factory,
@@ -139,7 +154,7 @@ async fn process_block<C, P>(
 ) -> eyre::Result<()>
 where
     C: ExecutorComponents<Network = Ethereum>,
-    P: Provider<Ethereum> + Clone,
+    P: Provider<Ethereum> + Clone + 'static,
 {
     let mut retry_count = 0;
 

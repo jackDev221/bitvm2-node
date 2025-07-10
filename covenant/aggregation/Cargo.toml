@@ -20,8 +20,10 @@ hex.workspace = true
 clap = { version = "4.5.7", features = ["derive", "env"] }
 dotenv = "0.15.0"
 futures-util = "0.3.31"
+lazy_static = { version = "1.5.0", default-features = false }
+sha2 = "0.10.8"
 
-# zkMIPS
+# Ziren
 zkm-sdk.workspace = true
 zkm-prover.workspace = true
 zkm-verifier.workspace = true
@@ -30,3 +32,6 @@ store = { path = "../../crates/store" }
 
 [build-dependencies]
 zkm-build.workspace = true
+
+[features]
+common_prover = []
