@@ -2,12 +2,15 @@ mod bitvm2;
 
 mod handler;
 mod node;
-mod proof;
+pub(crate) mod proof;
+pub mod routes;
 
 use crate::client::BTCClient;
 use crate::env::get_network;
 use crate::metrics_service::{MetricsState, metrics_handler, metrics_middleware};
-use crate::rpc_service::handler::proof_handler::{get_proof, get_proofs, get_proofs_overview};
+use crate::rpc_service::handler::proof_handler::{
+    get_groth16_proof, get_proof, get_proofs, get_proofs_overview,
+};
 use crate::rpc_service::handler::{bitvm2_handler::*, node_handler::*};
 use axum::body::Body;
 use axum::extract::Request;
@@ -77,28 +80,29 @@ pub async fn serve(
 ) -> anyhow::Result<String> {
     let app_state = AppState::create_arc_app_state(local_db, actor, peer_id, registry).await?;
     let server = Router::new()
-        .route("/", get(root))
-        .route("/v1/nodes", post(create_node))
-        .route("/v1/nodes", get(get_nodes))
-        .route("/v1/nodes/{:id}", get(get_node))
-        .route("/v1/nodes/overview", get(get_nodes_overview))
-        .route("/v1/instances/settings", get(instance_settings))
-        .route("/v1/instances", get(get_instances))
-        .route("/v1/instances", post(create_instance))
-        .route("/v1/instances/{:id}", get(get_instance))
-        .route("/v1/instances/{:id}", put(update_instance))
-        .route("/v1/instances/action/bridge_in_tx_prepare", post(bridge_in_tx_prepare))
-        .route("/v1/instances/overview", get(get_instances_overview))
-        .route("/v1/graphs/{:id}", get(get_graph))
-        .route("/v1/graphs/{:id}", put(update_graph))
-        .route("/v1/graphs", get(get_graphs))
-        .route("/v1/graphs/presign_check", get(graph_presign_check))
-        .route("/v1/graphs/{id}/txn", get(get_graph_txn))
-        .route("/v1/graphs/{id}/tx", get(get_graph_tx))
-        .route("/v1/proofs", get(get_proofs))
-        .route("/v1/proofs/{block_number}", get(get_proof))
-        .route("/v1/proofs/overview", get(get_proofs_overview))
-        .route("/metrics", get(metrics_handler))
+        .route(routes::ROOT, get(root))
+        .route(routes::v1::NODES_BASE, post(create_node))
+        .route(routes::v1::NODES_BASE, get(get_nodes))
+        .route(routes::v1::NODES_BY_ID, get(get_node))
+        .route(routes::v1::NODES_OVERVIEW, get(get_nodes_overview))
+        .route(routes::v1::INSTANCES_SETTINGS, get(instance_settings))
+        .route(routes::v1::INSTANCES_BASE, get(get_instances))
+        .route(routes::v1::INSTANCES_BASE, post(create_instance))
+        .route(routes::v1::INSTANCES_BY_ID, get(get_instance))
+        .route(routes::v1::INSTANCES_BY_ID, put(update_instance))
+        .route(routes::v1::INSTANCES_ACTION_BRIDGE_IN, post(bridge_in_tx_prepare))
+        .route(routes::v1::INSTANCES_OVERVIEW, get(get_instances_overview))
+        .route(routes::v1::GRAPHS_BY_ID, get(get_graph))
+        .route(routes::v1::GRAPHS_BY_ID, put(update_graph))
+        .route(routes::v1::GRAPHS_BASE, get(get_graphs))
+        .route(routes::v1::GRAPHS_PRESIGN_CHECK, get(graph_presign_check))
+        .route(routes::v1::GRAPHS_TXN_BY_ID, get(get_graph_txn))
+        .route(routes::v1::GRAPHS_TX_BY_ID, get(get_graph_tx))
+        .route(routes::v1::PROOFS_BASE, get(get_proofs))
+        .route(routes::v1::PROOFS_BY_BLOCK_NUMBER, get(get_proof))
+        .route(routes::v1::PROOFS_GROTH16_BY_BLOCK_NUMBER, get(get_groth16_proof))
+        .route(routes::v1::PROOFS_OVERVIEW, get(get_proofs_overview))
+        .route(routes::METRICS, get(metrics_handler))
         .layer(middleware::from_fn(print_req_and_resp_detail))
         .layer(CorsLayer::new().allow_headers(Any).allow_origin(Any).allow_methods(vec![
             Method::GET,
@@ -179,8 +183,9 @@ async fn print_req_and_resp_detail(
 #[cfg(test)]
 mod tests {
     use crate::client::create_local_db;
+    use crate::env::{ENV_GOAT_CHAIN_URL, ENV_GOAT_GATEWAY_CONTRACT_ADDRESS};
     use crate::rpc_service::{self, Actor};
-    use crate::utils::{generate_random_bytes, get_rand_btc_address};
+    use crate::utils::{generate_local_key, generate_random_bytes, get_rand_btc_address};
     use bitcoin::{Network, PublicKey};
     use bitvm2_lib::keys::NodeMasterKey;
     use prometheus_client::registry::Registry;
@@ -193,7 +198,15 @@ mod tests {
     use tracing_subscriber::EnvFilter;
     use uuid::Uuid;
 
-    fn init_tracing() {
+    fn init() {
+        unsafe {
+            std::env::set_var("RUST_LOG", "info");
+            std::env::set_var(ENV_GOAT_CHAIN_URL, "https://rpc.testnet3.goat.network");
+            std::env::set_var(
+                ENV_GOAT_GATEWAY_CONTRACT_ADDRESS,
+                "0xeD8AeeD334fA446FA03Aa00B28aFf02FA8aC02df",
+            );
+        }
         let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
     }
 
@@ -209,10 +222,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_nodes_api() -> Result<(), Box<dyn std::error::Error>> {
-        init_tracing();
+        init();
         let addr = available_addr();
         let actor = Actor::Challenger;
-        let local_key = identity::generate_local_key();
+        let local_key = generate_local_key();
         let peer_id = local_key.public().to_peer_id().to_string();
         let pub_key = hex::encode(generate_random_bytes(33));
         let goat_addr = format!("0x{}", hex::encode(generate_random_bytes(20)));
@@ -232,7 +245,7 @@ mod tests {
             .post(format!("http://{addr}/v1/nodes"))
             .json(&json!({
                 "peer_id": peer_id,
-                "actor": "Challenger",
+                "actor": "Operator",
                 "btc_pub_key": pub_key,
                 "goat_addr": goat_addr,
                 "socket_addr":"127.0.0.1:8080",
@@ -269,10 +282,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_bitvm2_api() -> Result<(), Box<dyn std::error::Error>> {
-        init_tracing();
+        init();
         let addr = available_addr();
         let actor = Actor::Challenger;
-        let local_key = identity::generate_local_key();
+        let local_key = generate_local_key();
         let peer_id = local_key.public().to_peer_id().to_string();
         let local_db = create_local_db(&temp_file()).await;
         tokio::spawn(rpc_service::serve(

@@ -43,7 +43,6 @@ libp2p-metrics = { workspace = true }
 futures = { workspace = true }
 
 bitvm2-lib = { workspace = true }
-identity = { workspace = true }
 store = { workspace = true }
 
 clap = { workspace = true }
@@ -84,6 +83,9 @@ ark-bn254 = { workspace = true }
 ark-groth16 = { workspace = true }
 ark-serialize = { workspace = true }
 async-trait = { workspace = true }
+
+zkm-sdk = { workspace = true }
+zkm-verifier = { workspace = true }
 
 stun-client = "0.1.4"
 

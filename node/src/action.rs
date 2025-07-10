@@ -1,11 +1,11 @@
 use crate::client::{BTCClient, GOATClient};
 use crate::env::{
     self, SYNC_GRAPH_INTERVAL, SYNC_GRAPH_MAX_WAIT_SECS, get_local_node_info,
-    get_node_goat_address, get_node_pubkey,
+    get_node_goat_address, get_node_pubkey, get_proof_server_url,
 };
 use crate::middleware::AllBehaviours;
 use crate::relayer_action::do_tick_action;
-use crate::rpc_service::current_time_secs;
+use crate::rpc_service::{current_time_secs, routes};
 use crate::utils::{statics::*, *};
 use crate::{defer, dismiss_defer};
 use anyhow::Result;
@@ -233,7 +233,12 @@ pub async fn recv_and_dispatch(
             do_tick_action(swarm, local_db, btc_client, goat_client).await?;
         }
         if actor == Actor::Operator
-            && let Some(message) = operator_scan_ready_proof(local_db).await?
+            && let Some(message) = operator_scan_ready_proof(
+                local_db,
+                get_proof_server_url(),
+                routes::v1::PROOFS_GROTH16_BASE,
+            )
+            .await?
         {
             local_message = message.clone();
         } else {

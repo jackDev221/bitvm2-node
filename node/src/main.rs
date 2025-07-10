@@ -27,7 +27,7 @@ use bitvm2_noded::middleware::{
 };
 use bitvm2_noded::rpc_service;
 use bitvm2_noded::utils::{
-    self, detect_heart_beat, run_watch_event_task, save_local_info,
+    self, detect_heart_beat, generate_local_key, run_watch_event_task, save_local_info,
     set_node_external_socket_addr_env,
 };
 
@@ -124,7 +124,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let Some(Commands::Key(key_arg)) = opt.cmd {
         match key_arg.cmd {
             KeyCommands::Peer => {
-                let local_key = identity::generate_local_key();
+                let local_key = generate_local_key();
                 let base64_key = base64::engine::general_purpose::STANDARD
                     .encode(&local_key.to_protobuf_encoding()?);
                 let peer_id = local_key.public().to_peer_id().to_string();
@@ -226,8 +226,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let goat_client = GOATClient::new(env::goat_config_from_env().await, env::get_goat_network());
     let ipfs = IPFS::new(&ipfs_url);
 
+    if actor == Actor::Operator {
+        set_node_external_socket_addr_env(&rpc_addr).await?;
+    }
     // validate node info
-    set_node_external_socket_addr_env(&rpc_addr).await?;
     check_node_info().await;
     save_local_info(&local_db).await;
 
