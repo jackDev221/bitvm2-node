@@ -2251,10 +2251,11 @@ impl<'a> StorageProcessor<'a> {
         proof_type: ProofType,
         block_number_min: i64,
         block_number_max: i64,
-    ) -> anyhow::Result<Vec<(i64, String, i64, f64, String, i64, i64)>> {
+    ) -> anyhow::Result<Vec<(i64, i64, String, i64, f64, String, i64, i64)>> {
         #[derive(sqlx::FromRow)]
         struct ProofInfoRow {
             block_number: i64,
+            proving_cycles: i64,
             state: String,
             proving_time: i64,
             proof_size: f64,
@@ -2264,19 +2265,19 @@ impl<'a> StorageProcessor<'a> {
         }
         let query = match proof_type {
             ProofType::BlockProof => {
-                "SELECT block_number, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                "SELECT block_number, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
                 FROM block_proof
                 WHERE block_number BETWEEN ? AND ?
                 ORDER BY block_number ASC"
             }
             ProofType::AggregationProof => {
-                "SELECT block_number, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                "SELECT block_number, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
                  FROM aggregation_proof
                  WHERE block_number BETWEEN ? AND ?
                  ORDER BY block_number ASC"
             }
             ProofType::Groth16Proof => {
-                "SELECT block_number, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                "SELECT block_number, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
                  FROM groth16_proof
                  WHERE block_number BETWEEN ? AND ?
                  ORDER BY block_number ASC"
@@ -2294,6 +2295,7 @@ impl<'a> StorageProcessor<'a> {
             .map(|v| {
                 (
                     v.block_number,
+                    v.proving_cycles,
                     v.state,
                     v.proving_time,
                     v.proof_size,
