@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use store::localdb::LocalDB;
-use store::{GoatTxType, ProofType};
+use store::{GoatTxType, ProofInfo, ProofType};
 use uuid::Uuid;
 
 #[axum::debug_handler]
@@ -191,37 +191,29 @@ pub async fn get_proofs_overview(
     }
 }
 
-fn convert_to_proof_items(
-    input: Vec<(i64, String, i64, f64, String, i64, i64)>,
-) -> HashMap<i64, ProofItem> {
+fn convert_to_proof_items(input: Vec<ProofInfo>) -> HashMap<i64, ProofItem> {
     input
         .into_iter()
-        .map(
-            |(
-                block_number,
-                state,
-                proving_time,
-                proof_size,
-                zkm_version,
-                started_at,
-                updated_at,
-            )| {
-                let total_time_to_proof =
-                    if updated_at >= started_at { updated_at - started_at } else { 0 };
-                (
-                    block_number,
-                    ProofItem {
-                        state,
-                        proving_time,
-                        total_time_to_proof,
-                        proof_size,
-                        zkm_version,
-                        started_at,
-                        updated_at,
-                    },
-                )
-            },
-        )
+        .map(|proof_info| {
+            let total_time_to_proof = if proof_info.updated_at >= proof_info.created_at {
+                proof_info.updated_at - proof_info.created_at
+            } else {
+                0
+            };
+            (
+                proof_info.block_number,
+                ProofItem {
+                    state: proof_info.state,
+                    proving_time: proof_info.proving_time,
+                    total_time_to_proof,
+                    proof_size: proof_info.proof_size,
+                    proving_cycles: proof_info.proving_cycles,
+                    zkm_version: proof_info.zkm_version,
+                    started_at: proof_info.created_at,
+                    updated_at: proof_info.updated_at,
+                },
+            )
+        })
         .collect()
 }
 

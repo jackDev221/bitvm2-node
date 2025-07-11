@@ -3,7 +3,7 @@ use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
     COMMITTEE_PRE_SIGN_NUM, GoatTxProveStatus, GoatTxRecord, GrapFullData, Graph,
     GraphTickActionMetaData, Instance, Message, Node, NodesOverview, NonceCollect,
-    NonceCollectMetaData, ProofType, ProofWithPis, PubKeyCollect, PubKeyCollectMetaData,
+    NonceCollectMetaData, ProofInfo, ProofType, ProofWithPis, PubKeyCollect, PubKeyCollectMetaData,
     WatchContract,
 };
 use sqlx::migrate::Migrator;
@@ -2251,58 +2251,33 @@ impl<'a> StorageProcessor<'a> {
         proof_type: ProofType,
         block_number_min: i64,
         block_number_max: i64,
-    ) -> anyhow::Result<Vec<(i64, String, i64, f64, String, i64, i64)>> {
-        #[derive(sqlx::FromRow)]
-        struct ProofInfoRow {
-            block_number: i64,
-            state: String,
-            proving_time: i64,
-            proof_size: f64,
-            zkm_version: String,
-            created_at: i64,
-            updated_at: i64,
-        }
+    ) -> anyhow::Result<Vec<ProofInfo>> {
         let query = match proof_type {
             ProofType::BlockProof => {
-                "SELECT block_number, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                "SELECT block_number, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
                 FROM block_proof
                 WHERE block_number BETWEEN ? AND ?
                 ORDER BY block_number ASC"
             }
             ProofType::AggregationProof => {
-                "SELECT block_number, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                "SELECT block_number, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
                  FROM aggregation_proof
                  WHERE block_number BETWEEN ? AND ?
                  ORDER BY block_number ASC"
             }
             ProofType::Groth16Proof => {
-                "SELECT block_number, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                "SELECT block_number, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
                  FROM groth16_proof
                  WHERE block_number BETWEEN ? AND ?
                  ORDER BY block_number ASC"
             }
         };
 
-        let rows = sqlx::query_as::<_, ProofInfoRow>(query)
+        Ok(sqlx::query_as::<_, ProofInfo>(query)
             .bind(block_number_min)
             .bind(block_number_max)
             .fetch_all(self.conn())
-            .await?;
-
-        Ok(rows
-            .into_iter()
-            .map(|v| {
-                (
-                    v.block_number,
-                    v.state,
-                    v.proving_time,
-                    v.proof_size,
-                    v.zkm_version,
-                    v.created_at,
-                    v.updated_at,
-                )
-            })
-            .collect())
+            .await?)
     }
 
     pub async fn get_proof_overview(
