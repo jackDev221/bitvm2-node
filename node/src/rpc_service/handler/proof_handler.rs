@@ -169,17 +169,29 @@ pub async fn get_proofs_overview(
         }
 
         let mut storage_process = app_state.local_db.acquire().await?;
-        let (total_blocks, avg_block_proof) =
+        let (total_blocks, sum_block_proof_time, block_proof_count) =
             storage_process.get_proof_overview(ProofType::BlockProof).await?;
-        let (_, avg_aggregation_proof) =
+        let (_, sum_aggregation_proof_time, aggregation_proof_count) =
             storage_process.get_proof_overview(ProofType::AggregationProof).await?;
-        let (_, avg_groth16_proof) =
+        let (_, sum_groth16_proof_times, groth16_proof_count) =
             storage_process.get_proof_overview(ProofType::Groth16Proof).await?;
         Ok::<Option<ProofsOverview>, Box<dyn std::error::Error>>(Some(ProofsOverview {
             total_blocks,
-            avg_block_proof,
-            avg_aggregation_proof,
-            avg_groth16_proof,
+            avg_block_proof: calculate_proof_avg_proof_time(
+                ProofType::BlockProof,
+                sum_block_proof_time,
+                block_proof_count,
+            ),
+            avg_aggregation_proof: calculate_proof_avg_proof_time(
+                ProofType::AggregationProof,
+                sum_aggregation_proof_time,
+                aggregation_proof_count,
+            ),
+            avg_groth16_proof: calculate_proof_avg_proof_time(
+                ProofType::BlockProof,
+                sum_groth16_proof_times,
+                groth16_proof_count,
+            ),
         }))
     };
     match async_fn().await {
@@ -270,4 +282,16 @@ async fn get_online_operator_url(local_db: &LocalDB) -> anyhow::Result<String> {
     } else {
         bail!("no operator is online")
     }
+}
+
+fn calculate_proof_avg_proof_time(proof_type: ProofType, sum_time: f64, proof_counts: i64) -> f64 {
+    if proof_counts == 0 {
+        return 0.0;
+    }
+    let concurrency = match proof_type {
+        ProofType::Groth16Proof | ProofType::AggregationProof => 1.0_f64,
+        ProofType::BlockProof => groth16::get_block_proof_concurrency() as f64,
+    };
+    tracing::info!("{proof_type:?}: concurrency: {concurrency}");
+    sum_time / concurrency / proof_counts as f64
 }
