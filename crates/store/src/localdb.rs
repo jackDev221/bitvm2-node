@@ -1959,6 +1959,46 @@ impl<'a> StorageProcessor<'a> {
         }
     }
 
+    pub async fn set_proof_concurrency(&mut self, concurrency: i64) -> anyhow::Result<()> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO proof_concurrency
+                (id, concurrency, updated_at)
+            VALUES
+                (?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                concurrency = excluded.concurrency,
+                updated_at = excluded.updated_at
+            "#,
+            1,
+            concurrency,
+            timestamp,
+        )
+        .execute(self.conn())
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_proof_concurrency(&mut self) -> anyhow::Result<i64> {
+        #[derive(sqlx::FromRow)]
+        struct ProofConcurrency {
+            concurrency: Option<i64>,
+        }
+
+        let row = sqlx::query_as!(
+            ProofConcurrency,
+            "SELECT concurrency FROM proof_concurrency WHERE id = ?",
+            1
+        )
+        .fetch_optional(self.conn())
+        .await?;
+
+        Ok(row.and_then(|r| r.concurrency).unwrap_or(1))
+    }
+
     pub async fn create_verifier_key(
         &mut self,
         verifier_id: &str,

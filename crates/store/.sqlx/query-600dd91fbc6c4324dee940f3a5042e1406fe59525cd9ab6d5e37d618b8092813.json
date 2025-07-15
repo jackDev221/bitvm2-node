@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT concurrency FROM proof_concurrency WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "concurrency",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "600dd91fbc6c4324dee940f3a5042e1406fe59525cd9ab6d5e37d618b8092813"
+}
