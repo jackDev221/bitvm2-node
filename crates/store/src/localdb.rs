@@ -2341,7 +2341,7 @@ impl<'a> StorageProcessor<'a> {
                     )
                     SELECT
                         COALESCE((SELECT MAX(block_number) FROM block_proof), 0) AS max_block_number,
-                        COALESCE((SELECT SUM(total_time_to_proof) FROM top_6_blocks), 0.0) AS total_proof_time_sum,
+                        COALESCE((SELECT SUM(total_time_to_proof) FROM top_6_blocks), 0) AS total_proof_time_sum,
                         COALESCE((SELECT COUNT(*) FROM top_6_blocks), 0) AS proof_record_count
                     "#
             }
@@ -2355,7 +2355,7 @@ impl<'a> StorageProcessor<'a> {
                     )
                     SELECT
                         COALESCE((SELECT MAX(block_number) FROM aggregation_proof), 0) AS max_block_number,
-                        COALESCE((SELECT SUM(total_time_to_proof) FROM top_6_blocks), 0.0) AS total_proof_time_sum,
+                        COALESCE((SELECT SUM(total_time_to_proof) FROM top_6_blocks), 0) AS total_proof_time_sum,
                         COALESCE((SELECT COUNT(*) FROM top_6_blocks), 0) AS proof_record_count"#
             }
             ProofType::Groth16Proof => {
@@ -2368,7 +2368,7 @@ impl<'a> StorageProcessor<'a> {
                     )
                     SELECT
                         COALESCE((SELECT MAX(block_number) FROM groth16_proof), 0) AS max_block_number,
-                        COALESCE((SELECT SUM(total_time_to_proof) FROM top_6_blocks), 0.0) AS total_proof_time_sum,
+                        COALESCE((SELECT SUM(total_time_to_proof) FROM top_6_blocks), 0) AS total_proof_time_sum,
                         COALESCE((SELECT COUNT(*) FROM top_6_blocks), 0) AS proof_record_count"#
             }
         };
