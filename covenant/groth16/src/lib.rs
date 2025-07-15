@@ -8,6 +8,13 @@ pub type VerifyingKey = ark_groth16::VerifyingKey<ark_bn254::Bn254>;
 pub type Groth16Proof = ark_groth16::Proof<ark_bn254::Bn254>;
 pub type PublicInputs = Vec<ark_bn254::Fr>;
 
+pub fn get_block_proof_concurrency() -> u32 {
+    std::env::var("MAX_CONCURRENT_EXECUTIONS")
+        .unwrap_or_else(|_| "1".to_string())
+        .parse::<u32>()
+        .unwrap_or(1)
+}
+
 pub fn get_latest_groth16_vk() -> Result<VerifyingKey> {
     Ok(load_ark_groth16_verifying_key_from_bytes(&GROTH16_VK_BYTES)?)
 }
@@ -91,5 +98,11 @@ mod tests {
         )
         .unwrap();
         assert!(ok);
+    }
+
+    #[test]
+    fn test_get_block_proof_concurrency() {
+        let concurrency = get_block_proof_concurrency();
+        println!("Block proof concurrency: {}", concurrency);
     }
 }
