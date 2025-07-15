@@ -284,7 +284,7 @@ async fn get_online_operator_url(local_db: &LocalDB) -> anyhow::Result<String> {
     }
 }
 
-fn calculate_proof_avg_proof_time(proof_type: ProofType, sum_time: f64, proof_counts: i64) -> f64 {
+fn calculate_proof_avg_proof_time(proof_type: ProofType, sum_time: i64, proof_counts: i64) -> f64 {
     if proof_counts == 0 {
         return 0.0;
     }
@@ -293,5 +293,5 @@ fn calculate_proof_avg_proof_time(proof_type: ProofType, sum_time: f64, proof_co
         ProofType::BlockProof => groth16::get_block_proof_concurrency() as f64,
     };
     tracing::info!("{proof_type:?}: concurrency: {concurrency}");
-    sum_time / concurrency / proof_counts as f64
+    sum_time as f64 / (concurrency * proof_counts as f64)
 }

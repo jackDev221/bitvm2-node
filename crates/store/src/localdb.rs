@@ -2283,11 +2283,11 @@ impl<'a> StorageProcessor<'a> {
     pub async fn get_proof_overview(
         &mut self,
         proof_type: ProofType,
-    ) -> anyhow::Result<(i64, f64, i64)> {
+    ) -> anyhow::Result<(i64, i64, i64)> {
         #[derive(sqlx::FromRow)]
         struct OverviewProof {
             max_block_number: i64,
-            total_proof_time_sum: f64,
+            total_proof_time_sum: i64,
             proof_record_count: i64,
         }
         let query = match proof_type {
