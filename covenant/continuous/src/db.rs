@@ -25,7 +25,7 @@ impl PersistToDB {
             self.local_db.acquire().await.map_err(|e| eyre!("Failed to acquire local db: {e}"))?;
 
         storage_process
-            .set_proof_concurrency(concurrency as i64)
+            .set_block_proof_concurrency(concurrency as i64)
             .await
             .map_err(|e| eyre!("Failed to start block execution: {e}"))?;
         Ok(())

@@ -563,9 +563,9 @@ pub struct Groth16Proof {
 }
 
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
-pub struct ProofConcurrency {
+pub struct ProofConfig {
     pub id: i64,
-    pub concurrency: i64,
+    pub block_proof_concurrency: i64,
     pub updated_at: i64,
 }
 

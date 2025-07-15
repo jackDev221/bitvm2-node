@@ -10,7 +10,7 @@ pub type PublicInputs = Vec<ark_bn254::Fr>;
 
 pub async fn get_block_proof_concurrency(db: &LocalDB) -> Result<u32> {
     let mut storage_process = db.acquire().await?;
-    let concurrency = storage_process.get_proof_concurrency().await? as u32;
+    let concurrency = storage_process.get_block_proof_concurrency().await? as u32;
     Ok(concurrency)
 }
 
