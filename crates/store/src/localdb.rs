@@ -900,31 +900,49 @@ impl<'a> StorageProcessor<'a> {
     pub async fn get_sum_bridge_in(
         &mut self,
         bridge_path: u8,
-        filter_status: &str,
+        statuses: &[String],
     ) -> anyhow::Result<(i64, i64)> {
-        let record = sqlx::query!(
+        #[derive(sqlx::FromRow)]
+        struct BridgeInRow {
+            pub total: i64,
+            pub tx_count: i64,
+        }
+
+        let query_str = format!(
             "SELECT SUM(amount) AS total, COUNT(*) AS tx_count
              FROM instance
-             WHERE bridge_path = ?
-               AND status != ?",
-            bridge_path,
-            filter_status
-        )
-        .fetch_one(self.conn())
-        .await?;
-        Ok((record.total.unwrap_or(0), record.tx_count))
+             WHERE bridge_path = {bridge_path}
+               AND status IN ({})",
+            create_place_holders(statuses)
+        );
+        let mut query = sqlx::query_as::<_, BridgeInRow>(&query_str);
+        for status in statuses {
+            query = query.bind(status);
+        }
+        let record = query.fetch_one(self.conn()).await?;
+        Ok((record.total, record.tx_count))
     }
 
-    pub async fn get_sum_bridge_out(&mut self) -> anyhow::Result<(i64, i64)> {
-        let record = sqlx::query!(
+    pub async fn get_sum_bridge_out(&mut self, statuses: &[String]) -> anyhow::Result<(i64, i64)> {
+        #[derive(sqlx::FromRow)]
+        struct BridgeOutRow {
+            pub total: i64,
+            pub tx_count: i64,
+        }
+
+        let query_str = format!(
             "SELECT SUM(amount) AS total, COUNT(*) AS tx_count
             FROM graph
-            WHERE status NOT IN
-                  ('OperatorPresigned', 'CommitteePresigned', 'OperatorDataPushed', 'Obsoleted')"
-        )
-        .fetch_one(self.conn())
-        .await?;
-        Ok((record.total.unwrap_or(0), record.tx_count))
+            WHERE status IN
+                  ({})",
+            create_place_holders(statuses)
+        );
+        let mut query = sqlx::query_as::<_, BridgeOutRow>(&query_str);
+        for status in statuses {
+            query = query.bind(status);
+        }
+        let record = query.fetch_one(self.conn()).await?;
+        Ok((record.total, record.tx_count))
     }
 
     pub async fn get_nodes_info(&mut self, time_threshold: i64) -> anyhow::Result<(i64, i64)> {
@@ -2323,46 +2341,57 @@ impl<'a> StorageProcessor<'a> {
     pub async fn get_proof_overview(
         &mut self,
         proof_type: ProofType,
-    ) -> anyhow::Result<(i64, f64)> {
+    ) -> anyhow::Result<(i64, i64, i64)> {
         #[derive(sqlx::FromRow)]
         struct OverviewProof {
             max_block_number: i64,
-            avg_total_proof_time: f64,
+            total_proof_time_sum: i64,
+            proof_record_count: i64,
         }
         let query = match proof_type {
             ProofType::BlockProof => {
                 r#"WITH top_6_blocks AS (
-                    SELECT total_time_to_proof FROM block_proof WHERE state = 'proved'
-                ORDER BY block_number DESC
-                LIMIT 6
-                )
-                SELECT
-                COALESCE((SELECT MAX(block_number) FROM block_proof), 0) AS max_block_number,
-                COALESCE((SELECT AVG(total_time_to_proof) FROM top_6_blocks),0.0) AS avg_total_proof_time"#
+                        SELECT total_time_to_proof
+                        FROM block_proof
+                        WHERE state = 'proved'
+                        ORDER BY block_number DESC
+                        LIMIT 6
+                    )
+                    SELECT
+                        COALESCE((SELECT MAX(block_number) FROM block_proof), 0) AS max_block_number,
+                        COALESCE((SELECT SUM(total_time_to_proof) FROM top_6_blocks), 0) AS total_proof_time_sum,
+                        COALESCE((SELECT COUNT(*) FROM top_6_blocks), 0) AS proof_record_count
+                    "#
             }
             ProofType::AggregationProof => {
                 r#"WITH top_6_blocks AS (
-                    SELECT total_time_to_proof FROM aggregation_proof WHERE state = 'proved'
-                ORDER BY block_number DESC
-                LIMIT 6
-                )
-                SELECT
-                COALESCE((SELECT MAX(block_number) FROM aggregation_proof), 0) AS max_block_number,
-                COALESCE((SELECT AVG(total_time_to_proof) FROM top_6_blocks),0.0) AS avg_total_proof_time"#
+                        SELECT total_time_to_proof
+                        FROM aggregation_proof
+                        WHERE state = 'proved'
+                        ORDER BY block_number DESC
+                        LIMIT 6
+                    )
+                    SELECT
+                        COALESCE((SELECT MAX(block_number) FROM aggregation_proof), 0) AS max_block_number,
+                        COALESCE((SELECT SUM(total_time_to_proof) FROM top_6_blocks), 0) AS total_proof_time_sum,
+                        COALESCE((SELECT COUNT(*) FROM top_6_blocks), 0) AS proof_record_count"#
             }
             ProofType::Groth16Proof => {
                 r#"WITH top_6_blocks AS (
-                    SELECT total_time_to_proof FROM groth16_proof WHERE state = 'proved'
-                ORDER BY block_number DESC
-                LIMIT 6
-                )
-                SELECT
-                COALESCE((SELECT MAX(block_number) FROM groth16_proof), 0) AS max_block_number,
-                COALESCE((SELECT AVG(total_time_to_proof) FROM top_6_blocks),0.0) AS avg_total_proof_time"#
+                        SELECT total_time_to_proof
+                        FROM groth16_proof
+                        WHERE state = 'proved'
+                        ORDER BY block_number DESC
+                        LIMIT 6
+                    )
+                    SELECT
+                        COALESCE((SELECT MAX(block_number) FROM groth16_proof), 0) AS max_block_number,
+                        COALESCE((SELECT SUM(total_time_to_proof) FROM top_6_blocks), 0) AS total_proof_time_sum,
+                        COALESCE((SELECT COUNT(*) FROM top_6_blocks), 0) AS proof_record_count"#
             }
         };
         let res = sqlx::query_as::<_, OverviewProof>(query).fetch_one(self.conn()).await?;
-        Ok((res.max_block_number, res.avg_total_proof_time))
+        Ok((res.max_block_number, res.total_proof_time_sum, res.proof_record_count))
     }
 
     pub async fn get_socket_addr_for_graph_query_proof(
