@@ -278,3 +278,58 @@ impl From<&BridgeInTransactionPreparerRequest> for P2pUserData {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::Address;
+    use store::localdb::FilterGraphParams;
+    use uuid::Uuid;
+    #[test]
+    fn test_from_graph_query_params_basic() {
+        let params = GraphQueryParams {
+            status: Some("pending".to_string()),
+            operator: Some("op1".to_string()),
+            from_addr: Some(Address::ZERO.to_string()),
+            graph_field: None,
+            offset: Some(10),
+            limit: Some(20),
+        };
+        let filter: FilterGraphParams = params.into();
+        assert_eq!(filter.status.is_some(), true);
+        assert_eq!(filter.operator, Some("op1".to_string()));
+        assert_eq!(filter.offset, Some(10));
+        assert_eq!(filter.limit, Some(20));
+        assert!(filter.is_bridge_out);
+    }
+
+    #[test]
+    fn test_from_graph_query_params_with_graph_field_txid() {
+        let params = GraphQueryParams {
+            status: None,
+            operator: None,
+            from_addr: None,
+            graph_field: Some(
+                "a3e1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5061728394a5b6c7d8e9".to_string(),
+            ),
+            offset: None,
+            limit: None,
+        };
+        let filter: FilterGraphParams = params.into();
+        assert!(filter.pegin_txid.is_some() || filter.graph_id.is_some());
+    }
+
+    #[test]
+    fn test_from_graph_query_params_with_graph_field_uuid() {
+        let params = GraphQueryParams {
+            status: None,
+            operator: None,
+            from_addr: None,
+            graph_field: Some(Uuid::new_v4().to_string()),
+            offset: None,
+            limit: None,
+        };
+        let filter: FilterGraphParams = params.into();
+        assert!(filter.graph_id.is_some() || filter.pegin_txid.is_some());
+    }
+}
