@@ -21,8 +21,6 @@ pub struct AggreationInput(Vec<Proof>);
 
 static ELF_ID: OnceLock<String> = OnceLock::new();
 
-const AGGREGATION_COUNT: u64 = 2;
-
 #[derive(Debug, Clone)]
 pub struct ProofWithPublicValues {
     pub block_number: u64,
@@ -40,6 +38,7 @@ pub struct AggregationExecutor {
     block_number: u64,
     is_start_block: bool,
     exec: bool,
+    agg_count: u64,
 }
 
 impl AggregationExecutor {
@@ -50,9 +49,10 @@ impl AggregationExecutor {
         vk: Arc<ZKMVerifyingKey>,
         block_number: u64,
         is_start_block: bool,
+        agg_count: u64,
         exec: bool,
     ) -> Self {
-        Self { db, client, pk, vk, block_number, is_start_block, exec }
+        Self { db, client, pk, vk, block_number, is_start_block, agg_count, exec }
     }
 
     pub async fn data_preparer(
@@ -66,33 +66,39 @@ impl AggregationExecutor {
         loop {
             let block_number = block_number_rx.recv();
             if let Ok(block_number) = block_number {
-                let block_proof1 = self.db.load_proof(block_number - 1, false).await?;
-                let block_proof2 = self.db.load_proof(block_number, false).await?;
+                let mut proofs = vec![];
+
+                for number in (block_number - self.agg_count + 1)..=block_number {
+                    let block_proof = self.db.load_proof(number, false).await?;
+                    proofs.push(block_proof);
+                }
 
                 let agg_input = if self.is_start_block && block_number == self.block_number {
                     restart = false;
-                    AggreationInput(vec![block_proof1, block_proof2])
+                    AggreationInput(proofs)
                 } else {
                     let pre_agg_proof = if restart {
                         restart = false;
-                        self.db.load_proof(block_number - AGGREGATION_COUNT, true).await?
+                        self.db.load_proof(block_number - self.agg_count, true).await?
                     } else {
                         let agg_proof = agg_proof_rx.recv()?;
-                        assert_eq!(agg_proof.block_number, block_number - AGGREGATION_COUNT);
+                        assert_eq!(agg_proof.block_number, block_number - self.agg_count);
                         Proof {
-                            block_number: block_number - AGGREGATION_COUNT,
+                            block_number: block_number - self.agg_count,
                             proof: agg_proof.proof,
                             public_values: agg_proof.public_values,
                             vk: self.vk.clone(),
                             zkm_version: agg_proof.zkm_version,
                         }
                     };
-                    AggreationInput(vec![pre_agg_proof, block_proof1, block_proof2])
+
+                    proofs.insert(0, pre_agg_proof);
+                    AggreationInput(proofs)
                 };
 
                 self.db.on_aggregation_start(block_number).await?;
                 input_tx.send(agg_input)?;
-                info!("Successfully load proofs: {}-{}", block_number - AGGREGATION_COUNT, block_number);
+                info!("Successfully load proofs: {}-{}", block_number - self.agg_count, block_number);
             }
         }
     }
@@ -136,7 +142,7 @@ impl AggregationExecutor {
                         self.db.on_aggregation_failed(block_number, err.to_string()).await?;
                     }
                 }
-                block_number_tx.send(block_number + AGGREGATION_COUNT)?;
+                block_number_tx.send(block_number + self.agg_count)?;
             }
         }
     }

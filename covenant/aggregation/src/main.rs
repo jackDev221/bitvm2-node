@@ -65,6 +65,7 @@ async fn main() {
         vk.clone(),
         args.block_number,
         args.start,
+        args.agg_count,
         args.exec,
     )
     .await;
