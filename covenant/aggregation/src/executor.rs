@@ -5,15 +5,15 @@ use std::sync::{
 };
 
 use anyhow::Result;
+use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 use tracing::{debug, error, info};
-use zkm_sdk::{
-    HashableKey, Prover, ZKMProof, ZKMProofKind, ZKMProofWithPublicValues,
-    ZKMProvingKey, ZKMPublicValues, ZKMStdin, ZKMVerifyingKey,
-};
-use sha2::{Digest, Sha256};
-use zkm_verifier::{Groth16Verifier, GROTH16_VK_BYTES};
 use zkm_prover::components::DefaultProverComponents;
+use zkm_sdk::{
+    HashableKey, Prover, ZKMProof, ZKMProofKind, ZKMProofWithPublicValues, ZKMProvingKey,
+    ZKMPublicValues, ZKMStdin, ZKMVerifyingKey,
+};
+use zkm_verifier::{Groth16Verifier, GROTH16_VK_BYTES};
 
 use crate::db::*;
 
@@ -98,7 +98,11 @@ impl AggregationExecutor {
 
                 self.db.on_aggregation_start(block_number).await?;
                 input_tx.send(agg_input)?;
-                info!("Successfully load proofs: {}-{}", block_number - self.agg_count, block_number);
+                info!(
+                    "Successfully load proofs: {}-{}",
+                    block_number - self.agg_count,
+                    block_number
+                );
             }
         }
     }
@@ -214,13 +218,18 @@ impl AggregationExecutor {
 
         // Generate the aggregation proof.
         let (agg_proof, cycles) = tokio::task::spawn_blocking(move || {
-                client_clone.prove_with_cycles(&pk, &stdin, ZKMProofKind::Compressed, elf_id)
-            })
-            .await??;
+            client_clone.prove_with_cycles(&pk, &stdin, ZKMProofKind::Compressed, elf_id)
+        })
+        .await??;
 
         let proving_duration = proving_start.elapsed();
         let block_number = block_numbers.last().unwrap();
-        info!("[Aggregation] [{}] proving duration: {:?}s, cycles: {:?}", block_number, proving_duration.as_secs_f32(), cycles);
+        info!(
+            "[Aggregation] [{}] proving duration: {:?}s, cycles: {:?}",
+            block_number,
+            proving_duration.as_secs_f32(),
+            cycles
+        );
 
         Ok((agg_proof, cycles, proving_duration))
     }
@@ -313,12 +322,16 @@ impl Groth16Executor {
         let pk = self.pk.clone();
 
         let groth16_proof = tokio::task::spawn_blocking(move || {
-                client.prove(&pk, stdin, ZKMProofKind::CompressToGroth16)
-            })
-            .await??;
+            client.prove(&pk, stdin, ZKMProofKind::CompressToGroth16)
+        })
+        .await??;
 
         let proving_duration = proving_start.elapsed();
-        info!("[Groth16] [{}] proving duration: {:?}s", block_number, proving_duration.as_secs_f32());
+        info!(
+            "[Groth16] [{}] proving duration: {:?}s",
+            block_number,
+            proving_duration.as_secs_f32()
+        );
 
         Ok((groth16_proof, proving_duration))
     }

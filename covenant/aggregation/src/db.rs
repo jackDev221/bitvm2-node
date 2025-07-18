@@ -7,10 +7,7 @@ use store::GoatTxType;
 use tokio::time::{sleep, Duration};
 use tracing::info;
 use zkm_prover::ZKM_CIRCUIT_VERSION;
-use zkm_sdk::{
-    HashableKey, ZKMProof, ZKMProofWithPublicValues, ZKMPublicValues,
-    ZKMVerifyingKey,
-};
+use zkm_sdk::{HashableKey, ZKMProof, ZKMProofWithPublicValues, ZKMPublicValues, ZKMVerifyingKey};
 use zkm_verifier::GROTH16_VK_BYTES;
 
 const PROOF_COUNT: u64 = 20;
