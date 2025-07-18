@@ -155,6 +155,7 @@ async fn print_req_and_resp_detail(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // TODO remove after the service stabilizes.
     let mut print_str = format!(
         "API Request: method:{}, uri:{}, content_type:{:?}, body:",
         req.method(),
@@ -166,7 +167,7 @@ async fn print_req_and_resp_detail(
     if !bytes.is_empty() {
         print_str = format!("{print_str} {}", String::from_utf8_lossy(&bytes));
     }
-    tracing::info!("{}", print_str);
+    tracing::debug!("{}", print_str);
     let req = Request::from_parts(parts, axum::body::Body::from(bytes));
     let resp = next.run(req).await;
 
@@ -176,7 +177,7 @@ async fn print_req_and_resp_detail(
     if !bytes.is_empty() {
         print_str = format!("{print_str} {}", String::from_utf8_lossy(&bytes));
     }
-    tracing::info!("{}", print_str);
+    tracing::debug!("{}", print_str);
     Ok(Response::from_parts(parts, axum::body::Body::from(bytes)))
 }
 
