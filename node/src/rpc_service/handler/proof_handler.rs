@@ -294,5 +294,5 @@ fn calculate_proof_avg_proof_time(sum_time: i64, proof_counts: i64, concurrency:
 }
 
 async fn get_proof_concurrency(local_db: &LocalDB) -> anyhow::Result<(i64, i64, i64)> {
-    Ok((groth16::get_block_proof_concurrency(local_db).await? as i64, 1, 1))
+    Ok((groth16::get_block_proof_concurrency(local_db).await? as i64, 2, 1))
 }
