@@ -17,9 +17,11 @@ use zkm_prover::components::DefaultProverComponents;
 
 use crate::db::*;
 
-pub struct AggreationInput((Proof, Proof));
+pub struct AggreationInput(Vec<Proof>);
 
 static ELF_ID: OnceLock<String> = OnceLock::new();
+
+const AGGREGATION_COUNT: u64 = 2;
 
 #[derive(Debug, Clone)]
 pub struct ProofWithPublicValues {
@@ -64,33 +66,33 @@ impl AggregationExecutor {
         loop {
             let block_number = block_number_rx.recv();
             if let Ok(block_number) = block_number {
+                let block_proof1 = self.db.load_proof(block_number - 1, false).await?;
+                let block_proof2 = self.db.load_proof(block_number, false).await?;
+
                 let agg_input = if self.is_start_block && block_number == self.block_number {
                     restart = false;
-                    let block_proof1 = self.db.load_proof(block_number - 1, false).await?;
-                    let block_proof2 = self.db.load_proof(block_number, false).await?;
-                    AggreationInput((block_proof1, block_proof2))
+                    AggreationInput(vec![block_proof1, block_proof2])
                 } else {
-                    let block_proof = self.db.load_proof(block_number, false).await?;
                     let pre_agg_proof = if restart {
                         restart = false;
-                        self.db.load_proof(block_number - 1, true).await?
+                        self.db.load_proof(block_number - AGGREGATION_COUNT, true).await?
                     } else {
                         let agg_proof = agg_proof_rx.recv()?;
-                        assert_eq!(agg_proof.block_number, block_number - 1);
+                        assert_eq!(agg_proof.block_number, block_number - AGGREGATION_COUNT);
                         Proof {
-                            block_number: block_number - 1,
+                            block_number: block_number - AGGREGATION_COUNT,
                             proof: agg_proof.proof,
                             public_values: agg_proof.public_values,
                             vk: self.vk.clone(),
                             zkm_version: agg_proof.zkm_version,
                         }
                     };
-                    AggreationInput((pre_agg_proof, block_proof))
+                    AggreationInput(vec![pre_agg_proof, block_proof1, block_proof2])
                 };
 
                 self.db.on_aggregation_start(block_number).await?;
                 input_tx.send(agg_input)?;
-                info!("Successfully load proofs: {}, {}", block_number - 1, block_number);
+                info!("Successfully load proofs: {}-{}", block_number - AGGREGATION_COUNT, block_number);
             }
         }
     }
@@ -105,8 +107,8 @@ impl AggregationExecutor {
         loop {
             let proofs = input_rx.recv();
             if let Ok(proofs) = proofs {
-                let block_number = proofs.0 .1.block_number;
-                match self.generate_aggregation_proof(vec![proofs.0 .0, proofs.0 .1]).await {
+                let block_number = proofs.0.last().unwrap().block_number;
+                match self.generate_aggregation_proof(proofs.0).await {
                     Ok((agg_proof, cycles, proving_duration)) => {
                         info!("Successfully generate aggregation proof: {}", block_number);
                         self.db
@@ -134,7 +136,7 @@ impl AggregationExecutor {
                         self.db.on_aggregation_failed(block_number, err.to_string()).await?;
                     }
                 }
-                block_number_tx.send(block_number + 1)?;
+                block_number_tx.send(block_number + AGGREGATION_COUNT)?;
             }
         }
     }
@@ -161,13 +163,20 @@ impl AggregationExecutor {
 
         let mut stdin = ZKMStdin::new();
 
+        // Write the verification keys.
+        let vkeys = inputs.iter().map(|input| input.vk.hash_u32()).collect::<Vec<_>>();
+        stdin.write::<Vec<[u32; 8]>>(&vkeys);
+
+        // Write the public values.
+        let public_values =
+            inputs.iter().map(|input| input.public_values.to_vec()).collect::<Vec<_>>();
+        stdin.write::<Vec<Vec<u8>>>(&public_values);
+
+        // Write the proofs.
+        //
+        // Note: this data will not actually be read by the aggregation program, instead it will be
+        // witnessed by the prover during the recursive aggregation process inside zkMIPS itself.
         for input in inputs {
-            stdin.write::<[u32; 8]>(&input.vk.hash_u32());
-
-            stdin.write::<Vec<u8>>(&input.public_values.to_vec());
-
-            // Note: this data will not actually be read by the aggregation program, instead it will be
-            // witnessed by the prover during the recursive aggregation process inside Ziren itself.
             let ZKMProof::Compressed(proof) = input.proof else { panic!() };
             stdin.write_proof(*proof, input.vk.vk.clone());
         }
