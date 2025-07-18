@@ -12,7 +12,7 @@ use crate::rpc_service::handler::proof_handler::{
     get_groth16_proof, get_proof, get_proofs, get_proofs_overview,
 };
 use crate::rpc_service::handler::{bitvm2_handler::*, node_handler::*};
-use crate::utils::get_mode_log_level;
+use crate::utils::get_module_log_level;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::middleware::Next;
@@ -156,7 +156,7 @@ async fn print_req_and_resp_detail(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let log_level = get_mode_log_level("bitvm2_noded");
+    let log_level = get_module_log_level("bitvm2_noded");
     if log_level != Level::INFO {
         let mut print_str = format!(
             "API Request: method:{}, uri:{}, content_type:{:?}, body:",

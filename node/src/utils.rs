@@ -1718,14 +1718,14 @@ pub fn generate_local_key() -> libp2p::identity::Keypair {
     libp2p::identity::Keypair::generate_ed25519()
 }
 
-pub fn get_mode_log_level(mode: &str) -> Level {
+pub fn get_module_log_level(module_name: &str) -> Level {
     if let Ok(rust_log) = std::env::var("RUST_LOG") {
         for part in rust_log.split(',') {
             let part = part.trim();
-            if let Some((module, level)) = part.split_once('=') {
-                if module.trim() == mode {
-                    return Level::from_str(&level.trim().to_lowercase()).unwrap_or(Level::INFO);
-                }
+            if let Some((module, level)) = part.split_once('=')
+                && module.trim() == module_name
+            {
+                return Level::from_str(&level.trim().to_lowercase()).unwrap_or(Level::INFO);
             }
         }
         for part in rust_log.split(',') {
