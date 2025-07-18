@@ -274,6 +274,15 @@ pub async fn recv_and_dispatch(
             id,
             from_peer_id
         ),
+        GOATMessageContent::RequestNodeInfo(_) | GOATMessageContent::ResponseNodeInfo(_) => {
+            tracing::debug!(
+                "Got message: {}:{} with id: {} from peer: {:?}",
+                &message.actor.to_string(),
+                String::from_utf8_lossy(&message.content),
+                id,
+                from_peer_id
+            )
+        }
         _ => tracing::info!(
             "Got message: {}:{} with id: {} from peer: {:?}",
             &message.actor.to_string(),
