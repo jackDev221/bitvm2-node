@@ -26,13 +26,36 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
-          - windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@master
-      - uses: taiki-e/install-action@v2
+      # Install Go for all platforms (required for zkm-recursion-gnark-ffi)
+      - name: Install Go (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      - name: Install Go (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      # Install protobuf-compiler for Ubuntu
+      - name: Install protobuf-compiler (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+      # Install protobuf-compiler for macOS
+      - name: Install protobuf-compiler (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install protobuf
+          # Install Rust nightly toolchain
+      - uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly
+          override: true
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required)
