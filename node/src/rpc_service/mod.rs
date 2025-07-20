@@ -184,22 +184,31 @@ async fn print_req_and_resp_detail(
 #[cfg(test)]
 mod tests {
     use crate::client::create_local_db;
-    use crate::env::{ENV_GOAT_CHAIN_URL, ENV_GOAT_GATEWAY_CONTRACT_ADDRESS};
-    use crate::rpc_service::{self, Actor};
-    use crate::utils::{generate_local_key, generate_random_bytes, get_rand_btc_address};
-    use bitcoin::{Network, PublicKey};
-    use bitvm2_lib::keys::NodeMasterKey;
+    use crate::env::{
+        ENV_GOAT_CHAIN_URL, ENV_GOAT_GATEWAY_CONTRACT_ADDRESS, ENV_PROOF_SEVER_URL, IpfsTxName,
+    };
+    use crate::rpc_service::{self, Actor, routes};
+    use crate::utils::{
+        generate_local_key, generate_random_bytes, get_rand_btc_address, get_rand_goat_address,
+        store_graph,
+    };
+    use bitcoin::Network;
+    use bitvm2_lib::types::Bitvm2Graph;
     use prometheus_client::registry::Registry;
-    use secp256k1::{Keypair, Secp256k1};
+    use serde::Deserialize;
     use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::str::FromStr;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use store::GraphStatus;
     use tokio::time::sleep;
     use tracing::info;
     use tracing_subscriber::EnvFilter;
     use uuid::Uuid;
 
-    fn init() {
+    fn init(remote_proof_server: Option<String>) {
         unsafe {
             std::env::set_var("RUST_LOG", "info");
             std::env::set_var(ENV_GOAT_CHAIN_URL, "https://rpc.testnet3.goat.network");
@@ -207,10 +216,12 @@ mod tests {
                 ENV_GOAT_GATEWAY_CONTRACT_ADDRESS,
                 "0xeD8AeeD334fA446FA03Aa00B28aFf02FA8aC02df",
             );
+            if let Some(remote_proof_server) = remote_proof_server {
+                std::env::set_var(ENV_PROOF_SEVER_URL, remote_proof_server);
+            }
         }
         let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
     }
-
     fn temp_file() -> String {
         let tmp_db = tempfile::NamedTempFile::new().unwrap();
         tmp_db.path().as_os_str().to_str().unwrap().to_string()
@@ -223,7 +234,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_nodes_api() -> Result<(), Box<dyn std::error::Error>> {
-        init();
+        init(None);
         let addr = available_addr();
         let actor = Actor::Challenger;
         let local_key = generate_local_key();
@@ -234,7 +245,7 @@ mod tests {
         tokio::spawn(rpc_service::serve(
             addr.clone(),
             local_db,
-            actor,
+            actor.clone(),
             peer_id.clone(),
             Arc::new(Mutex::new(Registry::default())),
         ));
@@ -243,10 +254,10 @@ mod tests {
         let client = reqwest::Client::new();
         info!("test api: create node");
         let resp = client
-            .post(format!("http://{addr}/v1/nodes"))
+            .post(format!("http://{addr}{}", routes::v1::NODES_BASE))
             .json(&json!({
                 "peer_id": peer_id,
-                "actor": "Operator",
+                "actor": actor.to_string(),
                 "btc_pub_key": pub_key,
                 "goat_addr": goat_addr,
                 "socket_addr":"127.0.0.1:8080",
@@ -259,14 +270,19 @@ mod tests {
         info!("Post Response: {res_body}");
 
         info!("test api: get node");
-        let resp = client.get(format!("http://{addr}/v1/nodes/{peer_id}")).send().await?;
+        let resp =
+            client.get(format!("http://{addr}{}/{peer_id}", routes::v1::NODES_BASE)).send().await?;
         assert!(resp.status().is_success());
         let res_body = resp.text().await?;
         info!("Post Response: {res_body}");
 
         info!("test api: get nodes");
         let resp = client
-            .get(format!("http://{addr}/v1/nodes?actor=Committee&status=Offline&offset=0&limit=5"))
+            .get(format!(
+                "http://{addr}{}?actor={}&status=Online&offset=0&limit=5",
+                routes::v1::NODES_BASE,
+                actor.to_string()
+            ))
             .send()
             .await?;
         assert!(resp.status().is_success());
@@ -274,7 +290,8 @@ mod tests {
         info!("Post Response: {res_body}");
 
         info!("test api: get nodes overview");
-        let resp = client.get(format!("http://{addr}/v1/nodes/overview")).send().await?;
+        let resp =
+            client.get(format!("http://{addr}{}", routes::v1::NODES_OVERVIEW)).send().await?;
         assert!(resp.status().is_success());
         let res_body = resp.text().await?;
         info!("Post Response: {res_body}");
@@ -283,7 +300,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_bitvm2_api() -> Result<(), Box<dyn std::error::Error>> {
-        init();
+        init(None);
         let addr = available_addr();
         let actor = Actor::Challenger;
         let local_key = generate_local_key();
@@ -291,9 +308,9 @@ mod tests {
         let local_db = create_local_db(&temp_file()).await;
         tokio::spawn(rpc_service::serve(
             addr.clone(),
-            local_db,
-            actor,
-            peer_id,
+            local_db.clone(),
+            actor.clone(),
+            peer_id.clone(),
             Arc::new(Mutex::new(Registry::default())),
         ));
         sleep(Duration::from_secs(1)).await;
@@ -302,15 +319,34 @@ mod tests {
         let from_addr = get_rand_btc_address(Network::Testnet);
         let client = reqwest::Client::new();
 
+        info!("load_test_graph");
+        let bitvm2_graph: Bitvm2Graph = load_test_bitvm2_graph();
+        let pub_key = bitvm2_graph.parameters.operator_pubkey.to_string();
+        info!("insert node info");
+        let resp = client
+            .post(format!("http://{addr}{}", routes::v1::NODES_BASE))
+            .json(&json!({
+                "peer_id": peer_id,
+                "actor": actor.to_string(),
+                "btc_pub_key": pub_key,
+                "goat_addr": get_rand_goat_address(),
+                "socket_addr":"127.0.0.1:8080",
+                "reward": 0,
+            }))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+
         info!("test api:/v1/instances/settings");
-        let resp = client.get(format!("http://{addr}/v1/instances/settings")).send().await?;
+        let resp =
+            client.get(format!("http://{addr}{}", routes::v1::INSTANCES_SETTINGS)).send().await?;
         assert!(resp.status().is_success());
         let res_body = resp.text().await?;
         info!("Post Response: {res_body}");
 
         info!("test api: test_bridge_in_tx_prepare");
         let resp = client
-            .post(format!("http://{addr}/v1/instances/action/bridge_in_tx_prepare"))
+            .post(format!("http://{addr}{}", routes::v1::INSTANCES_ACTION_BRIDGE_IN))
             .json(&json!({
                 "instance_id": instance_id,
                 "network": "testnet",
@@ -338,15 +374,21 @@ mod tests {
         info!("Post Response: {res_body}");
 
         info!("test api: get_instances");
-        let resp =
-            client.get(format!("http://{addr}/v1/instances/{instance_id}")).send().await.expect("");
+        let resp = client
+            .get(format!("http://{addr}{}/{instance_id}", routes::v1::INSTANCES_BASE))
+            .send()
+            .await
+            .expect("");
         assert!(resp.status().is_success());
         let res_body = resp.text().await.unwrap();
         info!("Post Response: {res_body}");
 
         info!("test api: get_instances");
         let resp = client
-            .get(format!("http://{addr}/v1/instances?from_addr={from_addr}&offset=0&limit=5"))
+            .get(format!(
+                "http://{addr}{}?from_addr={from_addr}&offset=0&limit=5",
+                routes::v1::INSTANCES_BASE
+            ))
             .send()
             .await?;
         assert!(resp.status().is_success());
@@ -354,22 +396,16 @@ mod tests {
         info!("Post Response: {res_body}");
 
         info!("test api: instance overview");
-        let resp = client.get(format!("http://{addr}/v1/instances/overview")).send().await?;
+        let resp =
+            client.get(format!("http://{addr}{}", routes::v1::INSTANCES_OVERVIEW)).send().await?;
         assert!(resp.status().is_success());
         let res_body = resp.text().await?;
         info!("Post Response: {res_body}");
 
-        let graph_state = "OperatorPresigned";
         info!("test api:update_graphs");
-
-        let pub_key: PublicKey =
-            NodeMasterKey::new(Keypair::new(&Secp256k1::new(), &mut rand::thread_rng()))
-                .master_keypair()
-                .public_key()
-                .into();
-
+        let graph_state = "OperatorPresigned";
         let resp = client
-            .put(format!("http://{addr}/v1/graphs/{graph_id}"))
+            .put(format!("http://{addr}{}/{graph_id}", routes::v1::GRAPHS_BASE))
             .json(&json!({
                 "graph":{
                     "graph_id": graph_id,
@@ -394,25 +430,284 @@ mod tests {
         info!("Post Response: {res_body}");
 
         info!("test api:get_graphs");
-        let resp = client.get(format!("http://{addr}/v1/graphs?offset=0&limit=10")).send().await?;
+        let resp = client
+            .get(format!("http://{addr}{}?offset=0&limit=10", routes::v1::GRAPHS_BASE))
+            .send()
+            .await?;
         assert!(resp.status().is_success());
         let res_body = resp.text().await?;
         info!("Post Response: {res_body}");
 
         info!("test api:get_graph");
-        let resp = client.get(format!("http://{addr}/v1/graphs/{graph_id}")).send().await?;
+        let resp = client
+            .get(format!("http://{addr}{}/{graph_id}", routes::v1::GRAPHS_BASE))
+            .send()
+            .await?;
         assert!(resp.status().is_success());
         let res_body = resp.text().await?;
         info!("Post Response: {res_body}");
 
         info!("test api:graph_presign_check");
         let resp = client
-            .get(format!("http://{addr}/v1/graphs/presign_check?instance_id={instance_id}"))
+            .get(format!(
+                "http://{addr}{}?instance_id={instance_id}",
+                routes::v1::GRAPHS_PRESIGN_CHECK
+            ))
             .send()
             .await?;
         assert!(resp.status().is_success());
         let res_body = resp.text().await?;
         info!("Post Response: {res_body}");
+
+        info!("test api:txn");
+        let graph_id = Uuid::new_v4();
+        info!("store test graph");
+        store_graph(
+            &local_db,
+            Uuid::from_str(&instance_id)?,
+            graph_id,
+            &bitvm2_graph,
+            Some(GraphStatus::Disprove.to_string()),
+        )
+        .await?;
+        let resp = client
+            .get(format!("http://{addr}{}/{graph_id}/txn", routes::v1::GRAPHS_BASE))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+        info!("test api: txn");
+        for tx_name in [
+            IpfsTxName::Pegin.as_str(),
+            IpfsTxName::Kickoff.as_str(),
+            IpfsTxName::AssertCommit0.as_str(),
+            IpfsTxName::AssertCommit1.as_str(),
+            IpfsTxName::AssertCommit2.as_str(),
+            IpfsTxName::AssertCommit3.as_str(),
+            IpfsTxName::AssertInit.as_str(),
+            IpfsTxName::AssertFinal.as_str(),
+            IpfsTxName::Challenge.as_str(),
+            IpfsTxName::Take1.as_str(),
+            IpfsTxName::Take2.as_str(),
+            IpfsTxName::Disprove.as_str(),
+        ] {
+            info!("test api: tx at {tx_name}");
+            let resp = client
+                .get(format!(
+                    "http://{addr}{}/{graph_id}/tx?tx_name={tx_name}",
+                    routes::v1::GRAPHS_BASE
+                ))
+                .send()
+                .await?;
+            assert!(resp.status().is_success());
+        }
+
         Ok(())
+    }
+
+    fn load_test_bitvm2_graph() -> Bitvm2Graph {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests_data/test_bitvm2_graph.json");
+        serde_json::from_str(
+            &fs::read_to_string(&path).expect("fail to read test bitvm_graph.json"),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_proof_api() -> Result<(), Box<dyn std::error::Error>> {
+        let addr_operator = available_addr();
+        let addr_relayer = available_addr();
+        init(Some(addr_operator.clone()));
+        info!("Start relayer server");
+        let relayer = Actor::Relayer;
+        let relayer_peer_id = generate_local_key().public().to_peer_id().to_string();
+        let relayer_local_db = create_local_db(&temp_file()).await;
+        tokio::spawn(rpc_service::serve(
+            addr_relayer.clone(),
+            relayer_local_db,
+            relayer,
+            relayer_peer_id,
+            Arc::new(Mutex::new(Registry::default())),
+        ));
+
+        info!("Start operator server");
+        let operator = Actor::Operator;
+        let operator_peer_id = generate_local_key().public().to_peer_id().to_string();
+        let operator_local_db = create_local_db(&temp_file()).await;
+        tokio::spawn(rpc_service::serve(
+            addr_operator.clone(),
+            operator_local_db.clone(),
+            operator,
+            operator_peer_id,
+            Arc::new(Mutex::new(Registry::default())),
+        ));
+
+        let (mut start_block, end_block) = (100, 106);
+        let proving_time = 200_i64;
+        let groth16_block_number = end_block - 1;
+        info!("init  proof data");
+        loop {
+            let mut storage_processor = operator_local_db.acquire().await?;
+            storage_processor.create_block_proving_task(start_block, "queued".to_string()).await?;
+            storage_processor.create_aggregation_task(start_block, "queued".to_string()).await?;
+            storage_processor.create_groth16_task(start_block, "queued".to_string()).await?;
+            if start_block == end_block {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(proving_time as u64)).await;
+
+            storage_processor
+                .update_block_proved(
+                    start_block,
+                    proving_time,
+                    10000,
+                    &vec![],
+                    &vec![],
+                    "verifier_id".to_string(),
+                    "v1.0.0",
+                    "proved".to_string(),
+                )
+                .await?;
+            storage_processor
+                .update_aggregation_succ(
+                    start_block,
+                    proving_time,
+                    10000,
+                    &vec![],
+                    &vec![],
+                    "verifier_id".to_string(),
+                    "v1.0.0",
+                    "proved".to_string(),
+                )
+                .await?;
+
+            if start_block == groth16_block_number {
+                let proof_info = get_proof_info();
+                storage_processor
+                    .update_groth16_succ(
+                        start_block,
+                        proving_time,
+                        10000,
+                        &hex::decode(proof_info.proof).unwrap(),
+                        &hex::decode(proof_info.public_value).unwrap(),
+                        proof_info.verifier_id.clone(),
+                        &proof_info.zkm_version,
+                        "proved".to_string(),
+                    )
+                    .await?;
+
+                storage_processor
+                    .create_verifier_key(
+                        &proof_info.zkm_version,
+                        &hex::decode(proof_info.verifier_key).unwrap(),
+                    )
+                    .await?;
+            }
+            start_block += 1;
+        }
+
+        sleep(Duration::from_secs(1)).await;
+        let client = reqwest::Client::new();
+        info!("test api:proof_overview through operator");
+        let resp = client
+            .get(format!("http://{addr_operator}{}", routes::v1::PROOFS_OVERVIEW))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+        let res_body = resp.text().await?;
+        info!("Post Response: {res_body}");
+        info!("test api:proof_overview through relayer");
+        let resp = client
+            .get(format!("http://{addr_relayer}{}", routes::v1::PROOFS_OVERVIEW))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+        let res_body = resp.text().await?;
+        info!("Post Response: {res_body}");
+
+        info!("test api:proofs/block_number through operator");
+        let resp = client
+            .get(format!(
+                "http://{addr_operator}{}/{groth16_block_number}",
+                routes::v1::PROOFS_BASE
+            ))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+        let res_body = resp.text().await?;
+        info!("Post Response: {res_body}");
+        info!("test api:proofs/block_number through relayer");
+        let resp = client
+            .get(format!("http://{addr_relayer}{}/{groth16_block_number}", routes::v1::PROOFS_BASE))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+        let res_body = resp.text().await?;
+        info!("Post Response: {res_body}");
+
+        info!("test api:proofs through operator");
+        let resp = client
+            .get(format!(
+                "http://{addr_operator}{}?block_number={groth16_block_number}",
+                routes::v1::PROOFS_BASE
+            ))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+        let res_body = resp.text().await?;
+        info!("Post Response: {res_body}");
+        info!("test api:proofs through relayer");
+        let resp = client
+            .get(format!(
+                "http://{addr_relayer}{}?block_number={groth16_block_number}",
+                routes::v1::PROOFS_BASE
+            ))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+        let res_body = resp.text().await?;
+        info!("Post Response: {res_body}");
+        info!("test api:proofs/groth16 through operator");
+        let resp = client
+            .get(format!(
+                "http://{addr_operator}{}/{groth16_block_number}",
+                routes::v1::PROOFS_GROTH16_BASE
+            ))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+        let res_body = resp.text().await?;
+        info!("Post Response: {res_body}");
+        info!("test api:proofs/groth16 through relayer");
+        let resp = client
+            .get(format!(
+                "http://{addr_relayer}{}/{groth16_block_number}",
+                routes::v1::PROOFS_GROTH16_BASE
+            ))
+            .send()
+            .await?;
+        assert!(resp.status().is_success());
+        let res_body = resp.text().await?;
+        info!("Post Response: {res_body}");
+
+        Ok(())
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    struct ProofInfo {
+        pub proof: String,
+        pub public_value: String,
+        pub zkm_version: String,
+        pub verifier_id: String,
+        pub verifier_key: String,
+    }
+
+    fn get_proof_info() -> ProofInfo {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests_data/test_proof_v1.1.0.json");
+        serde_json::from_str(
+            &fs::read_to_string(&path).expect("fail to read test proof_v1.1.0.json"),
+        )
+        .unwrap()
     }
 }
