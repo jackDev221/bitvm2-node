@@ -2014,9 +2014,9 @@ impl<'a> StorageProcessor<'a> {
                 updated_at = ?
             WHERE id = ?
             "#,
-            1,
             aggregate_block_count,
             timestamp,
+            1,
         )
         .execute(self.conn())
         .await?;
