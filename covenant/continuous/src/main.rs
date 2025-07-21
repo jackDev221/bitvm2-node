@@ -51,6 +51,7 @@ async fn main() -> eyre::Result<()> {
         .init();
 
     let config = args.as_config().await?;
+    info!("args: {:?}", args);
 
     let elf = include_elf!("covenant-guest").to_vec();
     let block_execution_strategy_factory =
@@ -156,10 +157,10 @@ where
                 return Ok(());
             }
             Err(err) => {
-                warn!("Failed to execute block {number}: {err}, retrying...");
+                warn!("Failed to execute block {number}: {err}, retrying {retry_count}...");
                 retry_count += 1;
                 if retry_count > max_retries {
-                    error!("Max retries reached for block: {number}");
+                    error!("Max retries {retry_count} reached for block: {number}");
                     return Err(err);
                 }
             }
