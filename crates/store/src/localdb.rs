@@ -2000,21 +2000,50 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
-    pub async fn get_block_proof_concurrency(&mut self) -> anyhow::Result<i64> {
+    pub async fn set_aggregate_block_count(
+        &mut self,
+        aggregate_block_count: i64,
+    ) -> anyhow::Result<()> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+
+        sqlx::query!(
+            r#"
+            UPDATE proof_config
+            SET 
+                aggregate_block_count = ?,
+                updated_at = ?
+            WHERE id = ?
+            "#,
+            aggregate_block_count,
+            timestamp,
+            1,
+        )
+        .execute(self.conn())
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_proof_config(&mut self) -> anyhow::Result<(i64, i64)> {
         #[derive(sqlx::FromRow)]
         struct ProofConfig {
             block_proof_concurrency: Option<i64>,
+            aggregate_block_count: Option<i64>,
         }
 
         let row = sqlx::query_as!(
             ProofConfig,
-            "SELECT block_proof_concurrency FROM proof_config WHERE id = ?",
+            "SELECT block_proof_concurrency, aggregate_block_count FROM proof_config WHERE id = ?",
             1
         )
         .fetch_optional(self.conn())
         .await?;
 
-        Ok(row.and_then(|r| r.block_proof_concurrency).unwrap_or(1))
+        if let Some(row) = row {
+            Ok((row.block_proof_concurrency.unwrap_or(1), row.aggregate_block_count.unwrap_or(1)))
+        } else {
+            Ok((1, 1))
+        }
     }
 
     pub async fn create_verifier_key(

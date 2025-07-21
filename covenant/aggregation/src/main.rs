@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc::sync_channel, Arc};
 
 use clap::Parser;
@@ -18,6 +19,10 @@ pub const AGGREGATION_ELF: &[u8] = include_elf!("guest-aggregation");
 
 const LOG_FILE: &str = "aggregation.log";
 const LOG_FIELS_COUNT: u64 = 2;
+
+lazy_static::lazy_static! {
+    pub static ref LAST_REMOVED_NUMBER: Arc<AtomicU64> = Arc::new(AtomicU64::new(1));
+}
 
 #[tokio::main]
 async fn main() {
@@ -48,8 +53,13 @@ async fn main() {
         .finish()
         .init();
 
+    tracing::info!("args: {:?}", args);
+
+    LAST_REMOVED_NUMBER.store(args.block_number, Ordering::Relaxed);
+
     let local_db: LocalDB = LocalDB::new(&format!("sqlite:{}", args.database_url), true).await;
-    let local_db = Arc::new(Db::new(Arc::new(local_db)));
+    local_db.migrate().await;
+    let local_db = Arc::new(Db::new(Arc::new(local_db), args.aggregate_block_count));
 
     let client = Arc::new(ProverClient::new());
 
@@ -65,6 +75,7 @@ async fn main() {
         vk.clone(),
         args.block_number,
         args.start,
+        args.aggregate_block_count,
         args.exec,
     )
     .await;

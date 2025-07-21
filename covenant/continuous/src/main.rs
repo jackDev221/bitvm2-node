@@ -51,12 +51,14 @@ async fn main() -> eyre::Result<()> {
         .init();
 
     let config = args.as_config().await?;
+    info!("args: {:?}", args);
 
     let elf = include_elf!("covenant-guest").to_vec();
     let block_execution_strategy_factory =
         create_eth_block_execution_strategy_factory(&config.genesis, None);
 
     let local_db = LocalDB::new(&format!("sqlite:{}", args.database_url), true).await;
+    local_db.migrate().await;
     let sqlite_db = db::PersistToDB::new(&local_db).await;
     let local_db = Arc::new(local_db);
 
@@ -156,10 +158,10 @@ where
                 return Ok(());
             }
             Err(err) => {
-                warn!("Failed to execute block {number}: {err}, retrying...");
+                warn!("Failed to execute block {number}: {err}, retrying {retry_count}...");
                 retry_count += 1;
                 if retry_count > max_retries {
-                    error!("Max retries reached for block: {number}");
+                    error!("Max retries {retry_count} reached for block: {number}");
                     return Err(err);
                 }
             }

@@ -5,19 +5,19 @@ use std::sync::{
 };
 
 use anyhow::Result;
+use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 use tracing::{debug, error, info};
-use zkm_sdk::{
-    HashableKey, Prover, ZKMProof, ZKMProofKind, ZKMProofWithPublicValues,
-    ZKMProvingKey, ZKMPublicValues, ZKMStdin, ZKMVerifyingKey,
-};
-use sha2::{Digest, Sha256};
-use zkm_verifier::{Groth16Verifier, GROTH16_VK_BYTES};
 use zkm_prover::components::DefaultProverComponents;
+use zkm_sdk::{
+    HashableKey, Prover, ZKMProof, ZKMProofKind, ZKMProofWithPublicValues, ZKMProvingKey,
+    ZKMPublicValues, ZKMStdin, ZKMVerifyingKey,
+};
+use zkm_verifier::{Groth16Verifier, GROTH16_VK_BYTES};
 
 use crate::db::*;
 
-pub struct AggreationInput((Proof, Proof));
+pub struct AggreationInput(Vec<Proof>);
 
 static ELF_ID: OnceLock<String> = OnceLock::new();
 
@@ -38,6 +38,7 @@ pub struct AggregationExecutor {
     block_number: u64,
     is_start_block: bool,
     exec: bool,
+    agg_count: u64,
 }
 
 impl AggregationExecutor {
@@ -48,9 +49,11 @@ impl AggregationExecutor {
         vk: Arc<ZKMVerifyingKey>,
         block_number: u64,
         is_start_block: bool,
+        agg_count: u64,
         exec: bool,
     ) -> Self {
-        Self { db, client, pk, vk, block_number, is_start_block, exec }
+        db.set_aggregate_block_count().await.unwrap();
+        Self { db, client, pk, vk, block_number, is_start_block, agg_count, exec }
     }
 
     pub async fn data_preparer(
@@ -64,33 +67,48 @@ impl AggregationExecutor {
         loop {
             let block_number = block_number_rx.recv();
             if let Ok(block_number) = block_number {
+                let mut proofs = vec![];
+                let start_number = if self.agg_count == 1 {
+                    block_number - 1
+                } else {
+                    block_number - self.agg_count + 1
+                };
+
+                for number in start_number..=block_number {
+                    let block_proof = self.db.load_proof(number, false).await?;
+                    proofs.push(block_proof);
+                }
+
                 let agg_input = if self.is_start_block && block_number == self.block_number {
                     restart = false;
-                    let block_proof1 = self.db.load_proof(block_number - 1, false).await?;
-                    let block_proof2 = self.db.load_proof(block_number, false).await?;
-                    AggreationInput((block_proof1, block_proof2))
+                    AggreationInput(proofs)
                 } else {
-                    let block_proof = self.db.load_proof(block_number, false).await?;
                     let pre_agg_proof = if restart {
                         restart = false;
-                        self.db.load_proof(block_number - 1, true).await?
+                        self.db.load_proof(block_number - self.agg_count, true).await?
                     } else {
                         let agg_proof = agg_proof_rx.recv()?;
-                        assert_eq!(agg_proof.block_number, block_number - 1);
+                        assert_eq!(agg_proof.block_number, block_number - self.agg_count);
                         Proof {
-                            block_number: block_number - 1,
+                            block_number: block_number - self.agg_count,
                             proof: agg_proof.proof,
                             public_values: agg_proof.public_values,
                             vk: self.vk.clone(),
                             zkm_version: agg_proof.zkm_version,
                         }
                     };
-                    AggreationInput((pre_agg_proof, block_proof))
+
+                    proofs.insert(0, pre_agg_proof);
+                    AggreationInput(proofs)
                 };
 
                 self.db.on_aggregation_start(block_number).await?;
                 input_tx.send(agg_input)?;
-                info!("Successfully load proofs: {}, {}", block_number - 1, block_number);
+                info!(
+                    "Successfully load proofs: {}-{}",
+                    block_number - self.agg_count,
+                    block_number
+                );
             }
         }
     }
@@ -105,8 +123,8 @@ impl AggregationExecutor {
         loop {
             let proofs = input_rx.recv();
             if let Ok(proofs) = proofs {
-                let block_number = proofs.0 .1.block_number;
-                match self.generate_aggregation_proof(vec![proofs.0 .0, proofs.0 .1]).await {
+                let block_number = proofs.0.last().unwrap().block_number;
+                match self.generate_aggregation_proof(proofs.0).await {
                     Ok((agg_proof, cycles, proving_duration)) => {
                         info!("Successfully generate aggregation proof: {}", block_number);
                         self.db
@@ -134,7 +152,7 @@ impl AggregationExecutor {
                         self.db.on_aggregation_failed(block_number, err.to_string()).await?;
                     }
                 }
-                block_number_tx.send(block_number + 1)?;
+                block_number_tx.send(block_number + self.agg_count)?;
             }
         }
     }
@@ -161,13 +179,20 @@ impl AggregationExecutor {
 
         let mut stdin = ZKMStdin::new();
 
+        // Write the verification keys.
+        let vkeys = inputs.iter().map(|input| input.vk.hash_u32()).collect::<Vec<_>>();
+        stdin.write::<Vec<[u32; 8]>>(&vkeys);
+
+        // Write the public values.
+        let public_values =
+            inputs.iter().map(|input| input.public_values.to_vec()).collect::<Vec<_>>();
+        stdin.write::<Vec<Vec<u8>>>(&public_values);
+
+        // Write the proofs.
+        //
+        // Note: this data will not actually be read by the aggregation program, instead it will be
+        // witnessed by the prover during the recursive aggregation process inside zkMIPS itself.
         for input in inputs {
-            stdin.write::<[u32; 8]>(&input.vk.hash_u32());
-
-            stdin.write::<Vec<u8>>(&input.public_values.to_vec());
-
-            // Note: this data will not actually be read by the aggregation program, instead it will be
-            // witnessed by the prover during the recursive aggregation process inside Ziren itself.
             let ZKMProof::Compressed(proof) = input.proof else { panic!() };
             stdin.write_proof(*proof, input.vk.vk.clone());
         }
@@ -199,13 +224,18 @@ impl AggregationExecutor {
 
         // Generate the aggregation proof.
         let (agg_proof, cycles) = tokio::task::spawn_blocking(move || {
-                client_clone.prove_with_cycles(&pk, &stdin, ZKMProofKind::Compressed, elf_id)
-            })
-            .await??;
+            client_clone.prove_with_cycles(&pk, &stdin, ZKMProofKind::Compressed, elf_id)
+        })
+        .await??;
 
         let proving_duration = proving_start.elapsed();
         let block_number = block_numbers.last().unwrap();
-        info!("[Aggregation] [{}] proving duration: {:?}s, cycles: {:?}", block_number, proving_duration.as_secs_f32(), cycles);
+        info!(
+            "[Aggregation] [{}] proving duration: {:?}s, cycles: {:?}",
+            block_number,
+            proving_duration.as_secs_f32(),
+            cycles
+        );
 
         Ok((agg_proof, cycles, proving_duration))
     }
@@ -298,12 +328,16 @@ impl Groth16Executor {
         let pk = self.pk.clone();
 
         let groth16_proof = tokio::task::spawn_blocking(move || {
-                client.prove(&pk, stdin, ZKMProofKind::CompressToGroth16)
-            })
-            .await??;
+            client.prove(&pk, stdin, ZKMProofKind::CompressToGroth16)
+        })
+        .await??;
 
         let proving_duration = proving_start.elapsed();
-        info!("[Groth16] [{}] proving duration: {:?}s", block_number, proving_duration.as_secs_f32());
+        info!(
+            "[Groth16] [{}] proving duration: {:?}s",
+            block_number,
+            proving_duration.as_secs_f32()
+        );
 
         Ok((groth16_proof, proving_duration))
     }
