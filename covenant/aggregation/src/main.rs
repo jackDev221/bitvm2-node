@@ -48,6 +48,8 @@ async fn main() {
         .finish()
         .init();
 
+    tracing::info!("args: {:?}", args);
+
     let local_db: LocalDB = LocalDB::new(&format!("sqlite:{}", args.database_url), true).await;
     let local_db = Arc::new(Db::new(Arc::new(local_db)));
 
@@ -65,6 +67,7 @@ async fn main() {
         vk.clone(),
         args.block_number,
         args.start,
+        args.aggregate_block_count,
         args.exec,
     )
     .await;

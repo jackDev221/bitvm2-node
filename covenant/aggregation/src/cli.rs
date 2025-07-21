@@ -26,4 +26,8 @@ pub struct Args {
     /// Execute guest.
     #[clap(long)]
     pub exec: bool,
+
+    /// Aggregate proofs count.
+    #[clap(long, env, default_value_t = 1)]
+    pub aggregate_block_count: u64,
 }
