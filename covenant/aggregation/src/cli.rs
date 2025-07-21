@@ -29,5 +29,5 @@ pub struct Args {
 
     /// Aggregate proofs count.
     #[clap(long, env, default_value_t = 1)]
-    pub agg_count: u64,
+    pub aggregate_block_count: u64,
 }

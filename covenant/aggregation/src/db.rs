@@ -32,6 +32,13 @@ impl Db {
         Self { db }
     }
 
+    pub async fn set_aggregate_block_count(&self, aggregate_block_count: u32) -> Result<()> {
+        let mut storage_process = self.db.acquire().await?;
+
+        storage_process.set_aggregate_block_count(aggregate_block_count as i64).await?;
+        Ok(())
+    }
+
     pub async fn on_aggregation_start(&self, block_number: u64) -> Result<()> {
         let mut storage_process = self.db.acquire().await?;
 
