@@ -567,6 +567,7 @@ pub struct ProofConfig {
     pub id: i64,
     pub block_proof_concurrency: i64,
     pub aggregate_block_count: i64,
+    pub start_aggregation_number: i64,
     pub updated_at: i64,
 }
 

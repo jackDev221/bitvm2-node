@@ -8,10 +8,27 @@ pub type VerifyingKey = ark_groth16::VerifyingKey<ark_bn254::Bn254>;
 pub type Groth16Proof = ark_groth16::Proof<ark_bn254::Bn254>;
 pub type PublicInputs = Vec<ark_bn254::Fr>;
 
-pub async fn get_proof_config(db: &LocalDB) -> Result<(i64, i64)> {
+pub fn calc_groth16_proof_number(
+    block_number: u64,
+    start_aggregation_number: u64,
+    aggregate_block_count: u64,
+) -> u64 {
+    if (block_number - start_aggregation_number).is_multiple_of(aggregate_block_count) {
+        block_number
+    } else {
+        start_aggregation_number
+            + ((block_number - start_aggregation_number) / aggregate_block_count + 1)
+                * aggregate_block_count
+    }
+}
+
+pub async fn get_proof_config(db: &LocalDB) -> Result<(i64, i64, i64)> {
     let mut storage_process = db.acquire().await?;
-    let (block_concurrency, aggregated_block_count) = storage_process.get_proof_config().await?;
-    Ok((block_concurrency, aggregated_block_count))
+
+    let (block_concurrency, aggregated_block_count, start_aggregation_number) =
+        storage_process.get_proof_config().await?;
+
+    Ok((block_concurrency, aggregated_block_count, start_aggregation_number))
 }
 
 pub fn get_latest_groth16_vk() -> Result<VerifyingKey> {
@@ -104,10 +121,28 @@ mod tests {
         const DB_URL: &str = "/tmp/.bitvm2-node.db";
         let db: LocalDB = LocalDB::new(&format!("sqlite:{DB_URL}"), true).await;
 
-        let (block_concurrency, agg_block_count) = get_proof_config(&db).await.unwrap();
+        let (block_concurrency, agg_block_count, start_number) =
+            get_proof_config(&db).await.unwrap();
         println!(
-            "Block proof concurrency: {}. Aggregate block count: {}",
-            block_concurrency, agg_block_count
+            "Block proof concurrency: {}. Aggregate block count: {}. Start aggregation number: {}",
+            block_concurrency, agg_block_count, start_number,
         );
+    }
+
+    #[test]
+    fn test_calc_groth16_proof_number() {
+        assert_eq!(9, calc_groth16_proof_number(8, 7, 2));
+        assert_eq!(12, calc_groth16_proof_number(11, 4, 2));
+        assert_eq!(17, calc_groth16_proof_number(16, 11, 2));
+        assert_eq!(12, calc_groth16_proof_number(12, 3, 3));
+        assert_eq!(16, calc_groth16_proof_number(14, 13, 3));
+        assert_eq!(13, calc_groth16_proof_number(13, 13, 3));
+    }
+
+    #[tokio::test]
+    async fn test_create_db() {
+        const DB_URL: &str = "/tmp/.bitvm2-node.db";
+        let db: LocalDB = LocalDB::new(&format!("sqlite:{DB_URL}"), true).await;
+        db.migrate().await;
     }
 }

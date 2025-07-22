@@ -36,10 +36,14 @@ impl Db {
         Self { db, aggregate_block_count }
     }
 
-    pub async fn set_aggregate_block_count(&self) -> Result<()> {
+    pub async fn set_aggregation_info(&self, start_aggregation_number: u64) -> Result<()> {
         let mut storage_process = self.db.acquire().await?;
-
-        storage_process.set_aggregate_block_count(self.aggregate_block_count as i64).await?;
+        storage_process
+            .set_aggregation_info(
+                self.aggregate_block_count as i64,
+                start_aggregation_number as i64,
+            )
+            .await?;
         Ok(())
     }
 

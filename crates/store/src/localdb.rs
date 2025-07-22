@@ -2000,9 +2000,10 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
-    pub async fn set_aggregate_block_count(
+    pub async fn set_aggregation_info(
         &mut self,
         aggregate_block_count: i64,
+        start_aggregation_number: i64,
     ) -> anyhow::Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
 
@@ -2011,10 +2012,12 @@ impl<'a> StorageProcessor<'a> {
             UPDATE proof_config
             SET 
                 aggregate_block_count = ?,
+                start_aggregation_number = ?,
                 updated_at = ?
             WHERE id = ?
             "#,
             aggregate_block_count,
+            start_aggregation_number,
             timestamp,
             1,
         )
@@ -2024,25 +2027,34 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
-    pub async fn get_proof_config(&mut self) -> anyhow::Result<(i64, i64)> {
+    pub async fn get_proof_config(&mut self) -> anyhow::Result<(i64, i64, i64)> {
         #[derive(sqlx::FromRow)]
         struct ProofConfig {
             block_proof_concurrency: Option<i64>,
             aggregate_block_count: Option<i64>,
+            start_aggregation_number: Option<i64>,
         }
 
         let row = sqlx::query_as!(
             ProofConfig,
-            "SELECT block_proof_concurrency, aggregate_block_count FROM proof_config WHERE id = ?",
+            "SELECT
+                block_proof_concurrency, aggregate_block_count, start_aggregation_number
+            FROM
+                proof_config
+            WHERE id = ?",
             1
         )
         .fetch_optional(self.conn())
         .await?;
 
         if let Some(row) = row {
-            Ok((row.block_proof_concurrency.unwrap_or(1), row.aggregate_block_count.unwrap_or(1)))
+            Ok((
+                row.block_proof_concurrency.unwrap_or(1),
+                row.aggregate_block_count.unwrap_or(1),
+                row.start_aggregation_number.unwrap_or(2),
+            ))
         } else {
-            Ok((1, 1))
+            Ok((1, 1, 2))
         }
     }
 
