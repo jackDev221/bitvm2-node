@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::str::FromStr;
 use store::localdb::FilterGraphParams;
-use store::{Graph, Instance, convert_to_step_state};
+use store::{Graph, GraphStatus, Instance, convert_to_step_state};
 use uuid::Uuid;
 
 #[allow(clippy::upper_case_acronyms)]
@@ -172,6 +172,14 @@ impl From<GraphQueryParams> for FilterGraphParams {
             }
         }
         let (is_bridge_out, from_addr) = reflect_goat_address(value.from_addr.clone());
+        let is_init_withdraw_not_null = if let Some(status) = value.status.clone()
+            && status == GraphStatus::KickOffing.to_string()
+        {
+            true
+        } else {
+            false
+        };
+
         let status = value.status.map(|status| convert_to_step_state(&status));
 
         FilterGraphParams {
@@ -183,6 +191,7 @@ impl From<GraphQueryParams> for FilterGraphParams {
             pegin_txid: pegin_txid_op,
             offset: value.offset,
             limit: value.limit,
+            is_init_withdraw_not_null
         }
     }
 }

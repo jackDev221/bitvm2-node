@@ -273,6 +273,7 @@ pub fn convert_to_step_state(ori_status: &str) -> String {
         "Created" => "OperatorPresigned".to_string(),
         "Presigned" => "CommitteePresigned".to_string(),
         "L2Recorded" => "OperatorDataPushed".to_string(),
+        "KickOffing" => "OperatorDataPushed".to_string(),
         "Challenging" => "KickOff".to_string(),
         "Asserting" => "Challenge".to_string(),
         "Disproving" => "Assert".to_string(),

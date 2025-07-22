@@ -606,13 +606,14 @@ pub async fn get_graphs(
                 if let Some((socket_addr, height)) = socket_info_map.get(&v.graph.graph_id)
                     && *height > 0
                 {
-                    v.graph.proof_height = Some(groth16::calc_groth16_proof_number(
+                    let groth16_proof_height = groth16::calc_groth16_proof_number(
                         *height as u64,
                         start_aggregation_number as u64,
                         aggregated_block_count as u64,
-                    ) as i64);
+                    ) as i64;
+                    v.graph.proof_height = Some(groth16_proof_height);
                     v.graph.proof_query_url =
-                        Some(format!("http://{socket_addr}/v1/proofs/{height}"));
+                        Some(format!("http://{socket_addr}/v1/proofs/{groth16_proof_height}"));
                 }
                 v
             })
