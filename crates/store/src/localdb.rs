@@ -84,6 +84,7 @@ pub struct FilterGraphParams {
     pub pegin_txid: Option<String>,
     pub offset: Option<u32>,
     pub limit: Option<u32>,
+    pub is_init_withdraw_not_null: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -592,7 +593,9 @@ impl<'a> StorageProcessor<'a> {
                  (graph.status == \'OperatorDataPushed\'  AND graph.init_withdraw_txid NOT NULL ) )".to_string(),
             );
         }
-
+        if params.is_init_withdraw_not_null {
+            conditions.push("graph.init_withdraw_txid NOT NULL".to_string());
+        }
         if !conditions.is_empty() {
             let condition_str = conditions.join(" AND ");
             graph_query_str = format!("{graph_query_str} WHERE {condition_str}");
