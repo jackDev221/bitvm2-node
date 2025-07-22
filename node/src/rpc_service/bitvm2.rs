@@ -191,7 +191,7 @@ impl From<GraphQueryParams> for FilterGraphParams {
             pegin_txid: pegin_txid_op,
             offset: value.offset,
             limit: value.limit,
-            is_init_withdraw_not_null
+            is_init_withdraw_not_null,
         }
     }
 }
