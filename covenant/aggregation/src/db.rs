@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use store::localdb::LocalDB;
-use store::GoatTxType;
+use store::{GoatTxType, GoatTxProveStatus};
 use tokio::time::{sleep, Duration};
 use tracing::info;
 use zkm_prover::ZKM_CIRCUIT_VERSION;
@@ -29,6 +29,20 @@ pub struct Proof {
 pub struct Db {
     db: Arc<LocalDB>,
     aggregate_block_count: u64,
+}
+
+fn calc_groth16_proof_number(
+    block_number: u64,
+    start_aggregation_number: u64,
+    aggregate_block_count: u64,
+) -> u64 {
+    if (block_number - start_aggregation_number).is_multiple_of(aggregate_block_count) {
+        block_number
+    } else {
+        start_aggregation_number
+            + ((block_number - start_aggregation_number) / aggregate_block_count + 1)
+            * aggregate_block_count
+    }
 }
 
 impl Db {
@@ -168,14 +182,18 @@ impl Db {
 
     pub async fn on_groth16_start(&self, block_number: u64) -> Result<bool> {
         let mut storage_process = self.db.acquire().await?;
-
-        if storage_process
-            .skip_groth16_proof(block_number as i64, &GoatTxType::ProceedWithdraw.to_string())
-            .await?
-        {
+        let (block_concurrency, aggregated_block_count, start_aggregation_number) =
+            storage_process.get_proof_config().await?;
+        let mut block_heights: Vec<i64> = storage_process
+            .get_need_proved_goat_tx_heights(
+                &GoatTxType::ProceedWithdraw.to_string(),
+                &GoatTxProveStatus::Pending.to_string(),
+            )
+            .await?;
+        block_heights.retain(|&x| calc_groth16_proof_number(x as u64, start_aggregation_number as u64, aggregated_block_count as u64) == block_number);
+        if block_heights.is_empty(){
             return Ok(false);
         }
-
         storage_process
             .create_groth16_task(block_number as i64, ProvableBlockStatus::Queued.to_string())
             .await?;

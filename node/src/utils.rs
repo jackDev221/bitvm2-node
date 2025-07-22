@@ -1569,13 +1569,18 @@ pub async fn operator_scan_ready_proof(
         };
 
     let mut message_content: Option<GOATMessageContent> = None;
-    let _ = calc_groth16_proof_config(local_db).await?; //TODO
+    let (_, aggregated_block_count, start_aggregation_number) =
+        groth16::get_proof_config(local_db).await?;
     for tx in check_txs {
         if tx.height == 0 {
             tracing::info!("Graph id :{} proceed withdraw tx online just waiting", tx.graph_id);
             continue;
         }
-        let groth16_height = tx.height; //TODO
+        let groth16_height = groth16::calc_groth16_proof_number(
+            tx.height as u64,
+            start_aggregation_number as u64,
+            aggregated_block_count as u64,
+        ) as i64;
         let challenge_txid_res = parse_challenge_txid_fn(tx.extra.clone());
         if let Ok(challenge_txid) = challenge_txid_res {
             if let Some(socket) = remote_proof_server_socket.clone() {
@@ -1665,14 +1670,15 @@ pub fn generate_local_key() -> libp2p::identity::Keypair {
     libp2p::identity::Keypair::generate_ed25519()
 }
 
-pub async fn calc_groth16_proof_config(_local_db: &LocalDB) -> anyhow::Result<(i64, i64)> {
-    Ok((1, 1))
-}
-
 pub async fn calc_groth16_proof_block_number(
     local_db: &LocalDB,
     origin_height: i64,
 ) -> anyhow::Result<i64> {
-    let _ = calc_groth16_proof_config(local_db).await?;
-    Ok(origin_height)
+    let (_, aggregated_block_count, start_aggregation_number) =
+        groth16::get_proof_config(local_db).await?;
+    Ok(groth16::calc_groth16_proof_number(
+        origin_height as u64,
+        start_aggregation_number as u64,
+        aggregated_block_count as u64,
+    ) as i64)
 }

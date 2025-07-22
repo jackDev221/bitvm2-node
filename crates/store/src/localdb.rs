@@ -2353,15 +2353,6 @@ impl<'a> StorageProcessor<'a> {
         Ok(tx_info_rows.into_iter().map(|v| (v.graph_id, v.tx_hash, v.zkm_version)).collect())
     }
 
-    pub async fn skip_groth16_proof(
-        &mut self,
-        block_number: i64,
-        goat_tx_type: &str,
-        _prove_status: &str,
-    ) -> anyhow::Result<bool> {
-        Ok(self.get_tx_info_for_gen_proof(block_number, goat_tx_type).await?.is_empty())
-    }
-
     pub async fn update_goat_tx_record_prove_status(
         &mut self,
         graph_id: &Uuid,

@@ -598,14 +598,19 @@ pub async fn get_graphs(
                 &GoatTxType::ProceedWithdraw.to_string(),
             )
             .await?;
-
+        let (_, aggregated_block_count, start_aggregation_number) =
+            groth16::get_proof_config(&app_state.local_db).await?;
         let graph_vec = graph_vec
             .into_iter()
             .map(|mut v| {
                 if let Some((socket_addr, height)) = socket_info_map.get(&v.graph.graph_id)
                     && *height > 0
                 {
-                    v.graph.proof_height = Some(*height);
+                    v.graph.proof_height = Some(groth16::calc_groth16_proof_number(
+                        *height as u64,
+                        start_aggregation_number as u64,
+                        aggregated_block_count as u64,
+                    ) as i64);
                     v.graph.proof_query_url =
                         Some(format!("http://{socket_addr}/v1/proofs/{height}"));
                 }
