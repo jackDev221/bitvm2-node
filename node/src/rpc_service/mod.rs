@@ -171,7 +171,7 @@ async fn print_req_and_resp_detail(
     let req = Request::from_parts(parts, axum::body::Body::from(bytes));
     let resp = next.run(req).await;
 
-    let mut print_str = format!("API Response: status:{}, body:", resp.status(),);
+    let mut print_str = format!("API Response: status:{}, body:", resp.status(), );
     let (parts, body) = resp.into_parts();
     let bytes = body.collect().await.unwrap().to_bytes();
     if !bytes.is_empty() {
@@ -280,6 +280,7 @@ mod tests {
         info!("Post Response: {res_body}");
         Ok(())
     }
+
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_bitvm2_api() -> Result<(), Box<dyn std::error::Error>> {
