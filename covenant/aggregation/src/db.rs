@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use store::localdb::LocalDB;
-use store::{GoatTxType, GoatTxProveStatus};
+use store::{GoatTxProveStatus, GoatTxType};
 use tokio::time::{sleep, Duration};
 use tracing::info;
 use zkm_prover::ZKM_CIRCUIT_VERSION;
@@ -41,7 +41,7 @@ fn calc_groth16_proof_number(
     } else {
         start_aggregation_number
             + ((block_number - start_aggregation_number) / aggregate_block_count + 1)
-            * aggregate_block_count
+                * aggregate_block_count
     }
 }
 
@@ -182,18 +182,31 @@ impl Db {
 
     pub async fn on_groth16_start(&self, block_number: u64) -> Result<bool> {
         let mut storage_process = self.db.acquire().await?;
-        let (block_concurrency, aggregated_block_count, start_aggregation_number) =
+
+        let (_, aggregated_block_count, start_aggregation_number) =
             storage_process.get_proof_config().await?;
+
         let mut block_heights: Vec<i64> = storage_process
             .get_need_proved_goat_tx_heights(
                 &GoatTxType::ProceedWithdraw.to_string(),
                 &GoatTxProveStatus::Pending.to_string(),
+                (block_number - self.aggregate_block_count) as i64,
+                (self.aggregate_block_count + self.aggregate_block_count) as i64,
             )
             .await?;
-        block_heights.retain(|&x| calc_groth16_proof_number(x as u64, start_aggregation_number as u64, aggregated_block_count as u64) == block_number);
-        if block_heights.is_empty(){
+
+        block_heights.retain(|&x| {
+            calc_groth16_proof_number(
+                x as u64,
+                start_aggregation_number as u64,
+                aggregated_block_count as u64,
+            ) == block_number
+        });
+
+        if block_heights.is_empty() {
             return Ok(false);
         }
+
         storage_process
             .create_groth16_task(block_number as i64, ProvableBlockStatus::Queued.to_string())
             .await?;

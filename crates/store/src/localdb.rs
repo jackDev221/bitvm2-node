@@ -2291,15 +2291,21 @@ impl<'a> StorageProcessor<'a> {
         &mut self,
         tx_type: &str,
         prove_status: &str,
+        block_number: i64,
+        limit: i64,
     ) -> anyhow::Result<Vec<i64>> {
         let records = sqlx::query!(
             "SELECT DISTINCT height
             FROM goat_tx_record
             WHERE tx_type = ?
                 AND prove_status = ?
-                ORDER BY height ASC",
+                AND height > ?
+                ORDER BY height ASC
+                limit ?",
             tx_type,
-            prove_status
+            prove_status,
+            block_number,
+            limit,
         )
         .fetch_all(self.conn())
         .await?;
