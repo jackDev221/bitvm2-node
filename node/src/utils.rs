@@ -60,7 +60,7 @@ use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
 use store::{
     BridgeInStatus, GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph,
-    GraphStatus, Node, ProofWithPis,
+    GraphStatus, Node,
 };
 use stun_client::{Attribute, Class, Client};
 use tracing::warn;
@@ -726,8 +726,11 @@ pub async fn get_groth16_proof(
     if let Some(tx_record) = storage_processor
         .get_graph_goat_tx_record(graph_id, &GoatTxType::ProceedWithdraw.to_string())
         .await?
-        && let Ok((proof, pis, vk, version)) =
-            groth16::get_groth16_proof(local_db, tx_record.height as u64).await
+        && let Ok((proof, pis, vk, version)) = groth16::get_groth16_proof(
+            local_db,
+            calc_groth16_proof_block_number(local_db, tx_record.height).await? as u64,
+        )
+        .await
     {
         tracing::info!(
             "instance_id:{instance_id}, graph_id:{graph_id} finish get groth16 proof at version: {version}"
@@ -1451,8 +1454,9 @@ pub async fn run_watch_event_task(
     let goat_client = GOATClient::new(env::goat_config_from_env().await, env::get_goat_network());
     loop {
         tokio::time::sleep(Duration::from_secs(interval)).await;
-        if actor == Actor::Relayer {
+        if actor.clone() == Actor::Relayer {
             match monitor_events(
+                actor.clone(),
                 &goat_client,
                 &local_db,
                 vec![
@@ -1472,8 +1476,9 @@ pub async fn run_watch_event_task(
                 }
             }
         }
-        if actor == Actor::Operator {
+        if actor.clone() == Actor::Operator {
             match monitor_events(
+                actor.clone(),
                 &goat_client,
                 &local_db,
                 vec![GatewayEventEntity::ProceedWithdraws],
@@ -1485,67 +1490,6 @@ pub async fn run_watch_event_task(
                     tracing::error!(e)
                 }
             }
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub async fn run_gen_groth16_proof_task(
-    local_db: LocalDB,
-    interval: u64,
-) -> anyhow::Result<String> {
-    let local_operator = get_local_node_info().btc_pub_key;
-    let local_db = &local_db;
-    loop {
-        tokio::time::sleep(Duration::from_secs(interval)).await;
-        let tx_records = {
-            let mut storage_processor = local_db.acquire().await?;
-            storage_processor
-                .get_goat_tx_record_by_prove_status(
-                    &GoatTxType::ProceedWithdraw.to_string(),
-                    &GoatTxProveStatus::Pending.to_string(),
-                )
-                .await?
-        };
-
-        for record in tx_records {
-            let mut tx = local_db.start_transaction().await?;
-            let operator = tx.get_graph_operator(&record.graph_id).await?;
-            if operator.is_none() || operator.unwrap() != local_operator {
-                tx.update_goat_tx_record_prove_status(
-                    &record.graph_id,
-                    &record.instance_id,
-                    &record.tx_type,
-                    &GoatTxProveStatus::NoNeed.to_string(),
-                )
-                .await?;
-                tx.commit().await?;
-                continue;
-            }
-
-            // TODO
-            let proof = "".to_string();
-            let pis = "".to_string();
-            let cast = 0;
-
-            tx.create_or_update_proof_with_pis(ProofWithPis {
-                instance_id: record.graph_id,
-                graph_id: Some(record.graph_id),
-                proof,
-                pis,
-                goat_block_number: record.height,
-                proof_cast: 0,
-                created_at: current_time_secs() - cast,
-            })
-            .await?;
-            tx.update_goat_tx_record_prove_status(
-                &record.graph_id,
-                &record.instance_id,
-                &record.tx_type,
-                &GoatTxProveStatus::Proved.to_string(),
-            )
-            .await?;
-            tx.commit().await?;
         }
     }
 }
@@ -1625,15 +1569,23 @@ pub async fn operator_scan_ready_proof(
         };
 
     let mut message_content: Option<GOATMessageContent> = None;
+    let (_, aggregated_block_count, start_aggregation_number) =
+        groth16::get_proof_config(local_db).await?;
     for tx in check_txs {
         if tx.height == 0 {
             tracing::info!("Graph id :{} proceed withdraw tx online just waiting", tx.graph_id);
             continue;
         }
+        let groth16_height = groth16::calc_groth16_proof_number(
+            tx.height as u64,
+            start_aggregation_number as u64,
+            aggregated_block_count as u64,
+        ) as i64;
         let challenge_txid_res = parse_challenge_txid_fn(tx.extra.clone());
         if let Ok(challenge_txid) = challenge_txid_res {
             if let Some(socket) = remote_proof_server_socket.clone() {
-                let resp = client.get(format!("http://{socket}{uri}/{}", tx.height)).send().await?;
+                let resp =
+                    client.get(format!("http://{socket}{uri}/{groth16_height}")).send().await?;
                 if resp.status().is_success()
                     && let Some(proof_value) = resp.json::<Option<Groth16ProofValue>>().await?
                 {
@@ -1655,7 +1607,7 @@ pub async fn operator_scan_ready_proof(
                             &proof_value.public_values,
                             &proof_value.verifier_id,
                             &proof_value.zkm_version,
-                            "proved",
+                            &GoatTxProveStatus::Proved.to_string(),
                         )
                         .await?;
                 } else {
@@ -1666,7 +1618,7 @@ pub async fn operator_scan_ready_proof(
                     continue;
                 }
             } else {
-                let (proof, _, _, _) = storage_proccessor.get_groth16_proof(tx.height).await?;
+                let (proof, _, _, _) = storage_proccessor.get_groth16_proof(groth16_height).await?;
                 if proof.is_empty() {
                     tracing::info!("Graph id :{} proof is empty just waiting", tx.graph_id);
                     continue;
@@ -1716,4 +1668,17 @@ pub async fn operator_scan_ready_proof(
 
 pub fn generate_local_key() -> libp2p::identity::Keypair {
     libp2p::identity::Keypair::generate_ed25519()
+}
+
+pub async fn calc_groth16_proof_block_number(
+    local_db: &LocalDB,
+    origin_height: i64,
+) -> anyhow::Result<i64> {
+    let (_, aggregated_block_count, start_aggregation_number) =
+        groth16::get_proof_config(local_db).await?;
+    Ok(groth16::calc_groth16_proof_number(
+        origin_height as u64,
+        start_aggregation_number as u64,
+        aggregated_block_count as u64,
+    ) as i64)
 }

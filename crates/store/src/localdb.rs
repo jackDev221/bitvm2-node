@@ -2287,6 +2287,45 @@ impl<'a> StorageProcessor<'a> {
         .await?)
     }
 
+    pub async fn get_need_proved_goat_tx_heights(
+        &mut self,
+        tx_type: &str,
+        prove_status: &str,
+    ) -> anyhow::Result<Vec<i64>> {
+        let records = sqlx::query!(
+            "SELECT DISTINCT height
+            FROM goat_tx_record
+            WHERE tx_type = ?
+                AND prove_status = ?
+                ORDER BY height ASC",
+            tx_type,
+            prove_status
+        )
+        .fetch_all(self.conn())
+        .await?;
+        Ok(records.iter().map(|v| v.height).collect())
+    }
+
+    pub async fn update_goat_tx_proved_state_by_height(
+        &mut self,
+        tx_type: &str,
+        prove_status: &str,
+        max_block_height: i64,
+    ) -> anyhow::Result<()> {
+        sqlx::query!(
+            "UPDATE goat_tx_record
+                SET prove_status = ?
+            WHERE tx_type = ?
+                AND height < ?",
+            prove_status,
+            tx_type,
+            max_block_height
+        )
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
     pub async fn get_tx_info_for_gen_proof(
         &mut self,
         block_number: i64,
@@ -2312,14 +2351,6 @@ impl<'a> StorageProcessor<'a> {
         .fetch_all(self.conn())
         .await?;
         Ok(tx_info_rows.into_iter().map(|v| (v.graph_id, v.tx_hash, v.zkm_version)).collect())
-    }
-
-    pub async fn skip_groth16_proof(
-        &mut self,
-        block_number: i64,
-        goat_tx_type: &str,
-    ) -> anyhow::Result<bool> {
-        Ok(self.get_tx_info_for_gen_proof(block_number, goat_tx_type).await?.is_empty())
     }
 
     pub async fn update_goat_tx_record_prove_status(

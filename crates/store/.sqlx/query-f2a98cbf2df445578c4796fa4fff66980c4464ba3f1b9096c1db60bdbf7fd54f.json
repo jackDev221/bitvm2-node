@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE goat_tx_record\n                SET prove_status = ?\n            WHERE tx_type = ?\n                AND height < ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "f2a98cbf2df445578c4796fa4fff66980c4464ba3f1b9096c1db60bdbf7fd54f"
+}

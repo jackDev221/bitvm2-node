@@ -152,6 +152,7 @@ pub async fn get_initialized_graphs(
 }
 
 pub async fn fetch_and_handle_block_range_events<'a>(
+    actor: Actor,
     client: &GraphQueryClient,
     storage_processor: &mut StorageProcessor<'a>,
     event_entities: &[GatewayEventEntity],
@@ -210,7 +211,7 @@ pub async fn fetch_and_handle_block_range_events<'a>(
     );
     handle_user_withdraw_events(storage_processor, init_withdraw_events, cancel_withdraw_events)
         .await?;
-    handle_proceed_withdraw_events(storage_processor, proceed_withdraw_events).await?;
+    handle_proceed_withdraw_events(actor, storage_processor, proceed_withdraw_events).await?;
     handle_withdraw_paths_events(storage_processor, withdraw_paths_events).await?;
     handle_withdraw_disproved_events(storage_processor, withdraw_disproved_events).await?;
     Ok(())
@@ -263,9 +264,15 @@ async fn handle_user_withdraw_events<'a>(
 }
 
 async fn handle_proceed_withdraw_events<'a>(
+    actor: Actor,
     storage_processor: &mut StorageProcessor<'a>,
     proceed_withdraw_events: Vec<ProceedWithdrawEvent>,
 ) -> Result<(), Box<dyn Error>> {
+    let prove_status = if actor == Actor::Operator && env::get_proof_server_url().is_none() {
+        GoatTxProveStatus::Pending.to_string()
+    } else {
+        GoatTxProveStatus::NoNeed.to_string()
+    };
     for event in proceed_withdraw_events {
         storage_processor
             .create_or_update_goat_tx_record(&GoatTxRecord {
@@ -275,7 +282,7 @@ async fn handle_proceed_withdraw_events<'a>(
                 tx_hash: event.transaction_hash,
                 height: event.block_number.parse::<i64>()?,
                 is_local: false,
-                prove_status: GoatTxProveStatus::NoNeed.to_string(),
+                prove_status: prove_status.clone(),
                 extra: None,
                 created_at: current_time_secs(),
             })
@@ -339,6 +346,7 @@ async fn handle_withdraw_disproved_events<'a>(
 }
 
 pub async fn fetch_history_events(
+    actor: Actor,
     local_db: &LocalDB,
     query_client: &GraphQueryClient,
     watch_contract: WatchContract,
@@ -371,6 +379,7 @@ pub async fn fetch_history_events(
             let mut tx = local_db.start_transaction().await?;
 
             fetch_and_handle_block_range_events(
+                actor.clone(),
                 query_client,
                 &mut tx,
                 &event_entities,
@@ -419,6 +428,7 @@ pub async fn fetch_history_events(
 }
 
 pub async fn monitor_events(
+    actor: Actor,
     goat_client: &GOATClient,
     local_db: &LocalDB,
     event_entities: Vec<GatewayEventEntity>,
@@ -465,6 +475,7 @@ pub async fn monitor_events(
         let event_entities_clone = event_entities.clone();
         tokio::spawn(async move {
             let _ = fetch_history_events(
+                actor.clone(),
                 &local_db_clone,
                 &query_client_clone,
                 watch_contract_clone,
@@ -482,6 +493,7 @@ pub async fn monitor_events(
     let to_height = current_finalized.min(watch_contract.from_height + watch_contract.gap);
     let mut tx = local_db.start_transaction().await?;
     fetch_and_handle_block_range_events(
+        actor.clone(),
         &query_client,
         &mut tx,
         &event_entities,
