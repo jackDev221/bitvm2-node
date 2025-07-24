@@ -1,7 +1,7 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GoatTxProveStatus, GoatTxRecord, GrapFullData, Graph,
+    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, GrapFullData, Graph,
     GraphTickActionMetaData, Instance, Message, Node, NodesOverview, NonceCollect,
     NonceCollectMetaData, ProofInfo, ProofType, ProofWithPis, PubKeyCollect, PubKeyCollectMetaData,
     WatchContract,
@@ -2205,10 +2205,6 @@ impl<'a> StorageProcessor<'a> {
             if !goat_tx_record_store.tx_hash.is_empty() {
                 update_goat_tx_record.tx_hash = goat_tx_record_store.tx_hash.clone();
             }
-
-            if GoatTxProveStatus::Pending.to_string() == goat_tx_record_store.prove_status {
-                update_goat_tx_record.prove_status = goat_tx_record_store.prove_status.clone();
-            }
         }
         sqlx::query!(
             "INSERT OR
@@ -2318,17 +2314,20 @@ impl<'a> StorageProcessor<'a> {
     pub async fn update_goat_tx_proved_state_by_height(
         &mut self,
         tx_type: &str,
-        prove_status: &str,
+        old_prove_statue: &str,
+        new_prove_status: &str,
         max_block_height: i64,
     ) -> anyhow::Result<()> {
         sqlx::query!(
             "UPDATE goat_tx_record
                 SET prove_status = ?
             WHERE tx_type = ?
-                AND height < ?",
-            prove_status,
+                AND height < ?
+                AND prove_status = ?",
+            new_prove_status,
             tx_type,
-            max_block_height
+            max_block_height,
+            old_prove_statue
         )
         .execute(self.conn())
         .await?;

@@ -57,7 +57,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
-use store::localdb::{LocalDB, UpdateGraphParams};
+use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
 use store::{
     BridgeInStatus, GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph,
     GraphStatus, Node,
@@ -1639,20 +1639,14 @@ pub async fn operator_scan_ready_proof(
                     &GoatTxProveStatus::Proved.to_string(),
                 )
                 .await?;
-        } else {
-            warn!(
-                "Graph id :{} proceed withdraw tx extra parse fail, error:{:?}",
-                tx.graph_id,
-                challenge_txid_res.err()
-            );
-            storage_proccessor
-                .update_goat_tx_record_prove_status(
-                    &tx.graph_id,
-                    &tx.instance_id,
-                    &tx.tx_type,
-                    &GoatTxProveStatus::Failed.to_string(),
-                )
-                .await?;
+            // storage_proccessor
+            //     .update_goat_tx_proved_state_by_height(
+            //         &tx.tx_type,
+            //         &GoatTxProveStatus::Pending.to_string(),
+            //         &GoatTxProveStatus::Failed.to_string(),
+            //         tx.height,
+            //     )
+            //     .await?;
         }
         if message_content.is_some() {
             break;
