@@ -1,10 +1,9 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, GrapFullData, Graph,
-    GraphTickActionMetaData, Instance, Message, Node, NodesOverview, NonceCollect,
-    NonceCollectMetaData, ProofInfo, ProofType, ProofWithPis, PubKeyCollect, PubKeyCollectMetaData,
-    WatchContract,
+    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, GrapFullData, Graph, GraphTickActionMetaData, Instance,
+    Message, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofInfo, ProofType,
+    ProofWithPis, PubKeyCollect, PubKeyCollectMetaData, WatchContract,
 };
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolConnection;

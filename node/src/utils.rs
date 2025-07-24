@@ -57,7 +57,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
-use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
+use store::localdb::{LocalDB, UpdateGraphParams};
 use store::{
     BridgeInStatus, GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph,
     GraphStatus, Node,
