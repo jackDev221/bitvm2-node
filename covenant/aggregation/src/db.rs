@@ -189,7 +189,12 @@ impl Db {
         );
 
         storage_process
-            .create_groth16_task(block_number as i64, ProvableBlockStatus::Queued.to_string())
+            .create_groth16_task(
+                block_number as i64,
+                (block_number + 1 - self.aggregate_block_count) as i64,
+                block_numbers.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","),
+                ProvableBlockStatus::Queued.to_string(),
+            )
             .await?;
 
         Ok(true)

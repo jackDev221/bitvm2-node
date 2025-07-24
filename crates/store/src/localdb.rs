@@ -1770,6 +1770,8 @@ impl<'a> StorageProcessor<'a> {
     pub async fn create_groth16_task(
         &mut self,
         block_number: i64,
+        start_number: i64,
+        real_numbers: String,
         state: String,
     ) -> anyhow::Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
@@ -1777,15 +1779,19 @@ impl<'a> StorageProcessor<'a> {
         sqlx::query!(
             r#"
             INSERT INTO groth16_proof 
-                (block_number, state, created_at, updated_at)
+                (block_number, start_number, real_numbers, state, created_at, updated_at)
             VALUES
-                (?, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?)
             ON CONFLICT(block_number) DO UPDATE SET
+                start_number = excluded.start_number,
+                real_numbers = excluded.real_numbers,
                 state = excluded.state,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at
             "#,
             block_number,
+            start_number,
+            real_numbers,
             state,
             timestamp,
             timestamp
