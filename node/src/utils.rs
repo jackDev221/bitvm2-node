@@ -1592,6 +1592,8 @@ pub async fn operator_scan_ready_proof(
                     storage_proccessor
                         .add_groth16_proof(
                             tx.height,
+                            tx.height,
+                            &format!("{}", tx.height),
                             &proof_value.proof,
                             &proof_value.public_values,
                             &proof_value.verifier_id,
