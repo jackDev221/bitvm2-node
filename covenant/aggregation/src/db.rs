@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use store::localdb::LocalDB;
-use store::GoatTxType;
+use store::{GoatTxProveStatus, GoatTxType};
 use tokio::time::{sleep, Duration};
 use tracing::info;
 use zkm_prover::ZKM_CIRCUIT_VERSION;
@@ -36,10 +36,14 @@ impl Db {
         Self { db, aggregate_block_count }
     }
 
-    pub async fn set_aggregate_block_count(&self) -> Result<()> {
+    pub async fn set_aggregation_info(&self, start_aggregation_number: u64) -> Result<()> {
         let mut storage_process = self.db.acquire().await?;
-
-        storage_process.set_aggregate_block_count(self.aggregate_block_count as i64).await?;
+        storage_process
+            .set_aggregation_info(
+                self.aggregate_block_count as i64,
+                start_aggregation_number as i64,
+            )
+            .await?;
         Ok(())
     }
 
@@ -165,15 +169,32 @@ impl Db {
     pub async fn on_groth16_start(&self, block_number: u64) -> Result<bool> {
         let mut storage_process = self.db.acquire().await?;
 
-        if storage_process
-            .skip_groth16_proof(block_number as i64, &GoatTxType::ProceedWithdraw.to_string())
-            .await?
-        {
+        let block_numbers: Vec<i64> = storage_process
+            .get_need_proved_goat_tx_heights(
+                &GoatTxType::ProceedWithdraw.to_string(),
+                &GoatTxProveStatus::Pending.to_string(),
+                (block_number - self.aggregate_block_count) as i64,
+                block_number as i64,
+            )
+            .await?;
+
+        if block_numbers.is_empty() {
             return Ok(false);
         }
 
+        tracing::info!(
+            "[groth16] block number: {}, real block numbers: {:?}",
+            block_number,
+            block_numbers
+        );
+
         storage_process
-            .create_groth16_task(block_number as i64, ProvableBlockStatus::Queued.to_string())
+            .create_groth16_task(
+                block_number as i64,
+                (block_number + 1 - self.aggregate_block_count) as i64,
+                block_numbers.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","),
+                ProvableBlockStatus::Queued.to_string(),
+            )
             .await?;
 
         Ok(true)

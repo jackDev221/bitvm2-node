@@ -598,7 +598,6 @@ pub async fn get_graphs(
                 &GoatTxType::ProceedWithdraw.to_string(),
             )
             .await?;
-
         let graph_vec = graph_vec
             .into_iter()
             .map(|mut v| {
@@ -607,7 +606,7 @@ pub async fn get_graphs(
                 {
                     v.graph.proof_height = Some(*height);
                     v.graph.proof_query_url =
-                        Some(format!("http://{socket_addr}/v1/proofs/{height}"));
+                        Some(format!("http://{socket_addr}/v1/proofs/{}", *height));
                 }
                 v
             })

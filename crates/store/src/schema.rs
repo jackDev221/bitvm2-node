@@ -273,6 +273,7 @@ pub fn convert_to_step_state(ori_status: &str) -> String {
         "Created" => "OperatorPresigned".to_string(),
         "Presigned" => "CommitteePresigned".to_string(),
         "L2Recorded" => "OperatorDataPushed".to_string(),
+        "KickOffing" => "OperatorDataPushed".to_string(),
         "Challenging" => "KickOff".to_string(),
         "Asserting" => "Challenge".to_string(),
         "Disproving" => "Assert".to_string(),
@@ -548,6 +549,8 @@ pub struct AggregationProof {
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
 pub struct Groth16Proof {
     pub block_number: i64,
+    pub start_number: i64,
+    pub real_numbers: i64,
     pub total_time_to_proof: i64,
     pub proving_time: i64,
     pub proving_cycles: i64,
@@ -567,6 +570,7 @@ pub struct ProofConfig {
     pub id: i64,
     pub block_proof_concurrency: i64,
     pub aggregate_block_count: i64,
+    pub start_aggregation_number: i64,
     pub updated_at: i64,
 }
 
@@ -575,6 +579,7 @@ pub struct ProofConfig {
 #[derive(Clone, Debug, FromRow)]
 pub struct ProofInfo {
     pub block_number: i64,
+    pub real_numbers: String,
     pub proving_cycles: i64,
     pub state: String,
     pub proving_time: i64,

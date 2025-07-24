@@ -43,17 +43,17 @@ pub async fn get_proof(
                 .get_range_proofs(ProofType::AggregationProof, block_number, block_number)
                 .await?,
         );
-        let groth16_proofs_map = convert_to_proof_items(
-            storage_process
-                .get_range_proofs(ProofType::Groth16Proof, block_number, block_number)
-                .await?,
-        );
+
+        let groth16_proof = storage_process
+            .get_groth16_proof_info(block_number)
+            .await?
+            .map(|groth16_proof_info| groth16_proof_info.into());
         Ok::<Option<Proofs>, Box<dyn std::error::Error>>(Some(Proofs {
             block_proofs: vec![BlockProofs {
                 block_number,
                 block_proof: block_proofs_map.get(&block_number).cloned(),
                 aggregation_proof: aggregation_proofs_map.get(&block_number).cloned(),
-                groth16_proof: groth16_proofs_map.get(&block_number).cloned(),
+                groth16_proof,
             }],
         }))
     };
@@ -206,29 +206,7 @@ pub async fn get_proofs_overview(
 }
 
 fn convert_to_proof_items(input: Vec<ProofInfo>) -> HashMap<i64, ProofItem> {
-    input
-        .into_iter()
-        .map(|proof_info| {
-            let total_time_to_proof = if proof_info.updated_at >= proof_info.created_at {
-                proof_info.updated_at - proof_info.created_at
-            } else {
-                0
-            };
-            (
-                proof_info.block_number,
-                ProofItem {
-                    state: proof_info.state,
-                    proving_time: proof_info.proving_time,
-                    total_time_to_proof,
-                    proof_size: proof_info.proof_size,
-                    proving_cycles: proof_info.proving_cycles,
-                    zkm_version: proof_info.zkm_version,
-                    started_at: proof_info.created_at,
-                    updated_at: proof_info.updated_at,
-                },
-            )
-        })
-        .collect()
+    input.into_iter().map(|proof_info| (proof_info.block_number, proof_info.into())).collect()
 }
 
 // get_detail_proof
@@ -294,6 +272,7 @@ fn calculate_proof_avg_proof_time(sum_time: i64, proof_counts: i64, concurrency:
 }
 
 async fn get_proof_config(local_db: &LocalDB) -> anyhow::Result<(i64, i64, i64)> {
-    let (block_concurrency, aggregated_block_count) = groth16::get_proof_config(local_db).await?;
+    let (block_concurrency, aggregated_block_count, _) =
+        groth16::get_proof_config(local_db).await?;
     Ok((block_concurrency, aggregated_block_count, 1))
 }

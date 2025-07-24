@@ -1,10 +1,9 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GoatTxProveStatus, GoatTxRecord, GrapFullData, Graph,
-    GraphTickActionMetaData, Instance, Message, Node, NodesOverview, NonceCollect,
-    NonceCollectMetaData, ProofInfo, ProofType, ProofWithPis, PubKeyCollect, PubKeyCollectMetaData,
-    WatchContract,
+    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, GrapFullData, Graph, GraphTickActionMetaData, Instance,
+    Message, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofInfo, ProofType,
+    ProofWithPis, PubKeyCollect, PubKeyCollectMetaData, WatchContract,
 };
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolConnection;
@@ -84,6 +83,7 @@ pub struct FilterGraphParams {
     pub pegin_txid: Option<String>,
     pub offset: Option<u32>,
     pub limit: Option<u32>,
+    pub is_init_withdraw_not_null: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -592,7 +592,9 @@ impl<'a> StorageProcessor<'a> {
                  (graph.status == \'OperatorDataPushed\'  AND graph.init_withdraw_txid NOT NULL ) )".to_string(),
             );
         }
-
+        if params.is_init_withdraw_not_null {
+            conditions.push("graph.init_withdraw_txid NOT NULL".to_string());
+        }
         if !conditions.is_empty() {
             let condition_str = conditions.join(" AND ");
             graph_query_str = format!("{graph_query_str} WHERE {condition_str}");
@@ -1768,6 +1770,8 @@ impl<'a> StorageProcessor<'a> {
     pub async fn create_groth16_task(
         &mut self,
         block_number: i64,
+        start_number: i64,
+        real_numbers: String,
         state: String,
     ) -> anyhow::Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
@@ -1775,15 +1779,19 @@ impl<'a> StorageProcessor<'a> {
         sqlx::query!(
             r#"
             INSERT INTO groth16_proof 
-                (block_number, state, created_at, updated_at)
+                (block_number, start_number, real_numbers, state, created_at, updated_at)
             VALUES
-                (?, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?)
             ON CONFLICT(block_number) DO UPDATE SET
+                start_number = excluded.start_number,
+                real_numbers = excluded.real_numbers,
                 state = excluded.state,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at
             "#,
             block_number,
+            start_number,
+            real_numbers,
             state,
             timestamp,
             timestamp
@@ -1958,8 +1966,9 @@ impl<'a> StorageProcessor<'a> {
             r#"
             SELECT proof, public_values, verifier_id, zkm_version
             FROM groth16_proof
-            WHERE block_number = ?
+            WHERE block_number >= ? AND start_number <= ?
             "#,
+            block_number,
             block_number
         )
         .fetch_optional(self.conn())
@@ -2000,9 +2009,10 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
-    pub async fn set_aggregate_block_count(
+    pub async fn set_aggregation_info(
         &mut self,
         aggregate_block_count: i64,
+        start_aggregation_number: i64,
     ) -> anyhow::Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
 
@@ -2011,10 +2021,12 @@ impl<'a> StorageProcessor<'a> {
             UPDATE proof_config
             SET 
                 aggregate_block_count = ?,
+                start_aggregation_number = ?,
                 updated_at = ?
             WHERE id = ?
             "#,
             aggregate_block_count,
+            start_aggregation_number,
             timestamp,
             1,
         )
@@ -2024,25 +2036,34 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
-    pub async fn get_proof_config(&mut self) -> anyhow::Result<(i64, i64)> {
+    pub async fn get_proof_config(&mut self) -> anyhow::Result<(i64, i64, i64)> {
         #[derive(sqlx::FromRow)]
         struct ProofConfig {
             block_proof_concurrency: Option<i64>,
             aggregate_block_count: Option<i64>,
+            start_aggregation_number: Option<i64>,
         }
 
         let row = sqlx::query_as!(
             ProofConfig,
-            "SELECT block_proof_concurrency, aggregate_block_count FROM proof_config WHERE id = ?",
+            "SELECT
+                block_proof_concurrency, aggregate_block_count, start_aggregation_number
+            FROM
+                proof_config
+            WHERE id = ?",
             1
         )
         .fetch_optional(self.conn())
         .await?;
 
         if let Some(row) = row {
-            Ok((row.block_proof_concurrency.unwrap_or(1), row.aggregate_block_count.unwrap_or(1)))
+            Ok((
+                row.block_proof_concurrency.unwrap_or(1),
+                row.aggregate_block_count.unwrap_or(1),
+                row.start_aggregation_number.unwrap_or(2),
+            ))
         } else {
-            Ok((1, 1))
+            Ok((1, 1, 2))
         }
     }
 
@@ -2190,10 +2211,6 @@ impl<'a> StorageProcessor<'a> {
             if !goat_tx_record_store.tx_hash.is_empty() {
                 update_goat_tx_record.tx_hash = goat_tx_record_store.tx_hash.clone();
             }
-
-            if GoatTxProveStatus::Pending.to_string() == goat_tx_record_store.prove_status {
-                update_goat_tx_record.prove_status = goat_tx_record_store.prove_status.clone();
-            }
         }
         sqlx::query!(
             "INSERT OR
@@ -2275,6 +2292,54 @@ impl<'a> StorageProcessor<'a> {
         .await?)
     }
 
+    pub async fn get_need_proved_goat_tx_heights(
+        &mut self,
+        tx_type: &str,
+        prove_status: &str,
+        start_number: i64,
+        end_number: i64,
+    ) -> anyhow::Result<Vec<i64>> {
+        let records = sqlx::query!(
+            "SELECT DISTINCT height
+            FROM goat_tx_record
+            WHERE tx_type = ?
+                AND prove_status = ?
+                AND height > ?
+                AND height <= ?
+                ORDER BY height ASC",
+            tx_type,
+            prove_status,
+            start_number,
+            end_number,
+        )
+        .fetch_all(self.conn())
+        .await?;
+        Ok(records.iter().map(|v| v.height).collect())
+    }
+
+    pub async fn update_goat_tx_proved_state_by_height(
+        &mut self,
+        tx_type: &str,
+        old_prove_statue: &str,
+        new_prove_status: &str,
+        max_block_height: i64,
+    ) -> anyhow::Result<()> {
+        sqlx::query!(
+            "UPDATE goat_tx_record
+                SET prove_status = ?
+            WHERE tx_type = ?
+                AND height < ?
+                AND prove_status = ?",
+            new_prove_status,
+            tx_type,
+            max_block_height,
+            old_prove_statue
+        )
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
     pub async fn get_tx_info_for_gen_proof(
         &mut self,
         block_number: i64,
@@ -2302,14 +2367,6 @@ impl<'a> StorageProcessor<'a> {
         Ok(tx_info_rows.into_iter().map(|v| (v.graph_id, v.tx_hash, v.zkm_version)).collect())
     }
 
-    pub async fn skip_groth16_proof(
-        &mut self,
-        block_number: i64,
-        goat_tx_type: &str,
-    ) -> anyhow::Result<bool> {
-        Ok(self.get_tx_info_for_gen_proof(block_number, goat_tx_type).await?.is_empty())
-    }
-
     pub async fn update_goat_tx_record_prove_status(
         &mut self,
         graph_id: &Uuid,
@@ -2333,6 +2390,16 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
+    pub async fn get_groth16_proof_info(
+        &mut self,
+
+        block_number: i64,
+    ) -> anyhow::Result<Option<ProofInfo>> {
+        Ok(sqlx::query_as!(ProofInfo, "SELECT block_number, real_numbers, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                 FROM groth16_proof
+                 WHERE   block_number >= ? AND  start_number  <= ? LIMIT 1", block_number, block_number).fetch_optional(self.conn()).await?)
+    }
+
     pub async fn get_range_proofs(
         &mut self,
         proof_type: ProofType,
@@ -2341,19 +2408,19 @@ impl<'a> StorageProcessor<'a> {
     ) -> anyhow::Result<Vec<ProofInfo>> {
         let query = match proof_type {
             ProofType::BlockProof => {
-                "SELECT block_number, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                "SELECT block_number, CAST(block_number AS TEXT) AS real_numbers, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
                 FROM block_proof
                 WHERE block_number BETWEEN ? AND ?
                 ORDER BY block_number ASC"
             }
             ProofType::AggregationProof => {
-                "SELECT block_number, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                "SELECT block_number, CAST(block_number AS TEXT) AS real_numbers, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
                  FROM aggregation_proof
                  WHERE block_number BETWEEN ? AND ?
                  ORDER BY block_number ASC"
             }
             ProofType::Groth16Proof => {
-                "SELECT block_number, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
+                "SELECT block_number, CAST(block_number AS TEXT) AS real_numbers, proving_cycles, state, proving_time, proof_size, zkm_version, created_at, updated_at
                  FROM groth16_proof
                  WHERE block_number BETWEEN ? AND ?
                  ORDER BY block_number ASC"

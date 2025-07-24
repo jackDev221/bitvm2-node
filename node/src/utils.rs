@@ -60,7 +60,7 @@ use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
 use store::{
     BridgeInStatus, GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph,
-    GraphStatus, Node, ProofWithPis,
+    GraphStatus, Node,
 };
 use stun_client::{Attribute, Class, Client};
 use tracing::warn;
@@ -1451,8 +1451,9 @@ pub async fn run_watch_event_task(
     let goat_client = GOATClient::new(env::goat_config_from_env().await, env::get_goat_network());
     loop {
         tokio::time::sleep(Duration::from_secs(interval)).await;
-        if actor == Actor::Relayer {
+        if actor.clone() == Actor::Relayer {
             match monitor_events(
+                actor.clone(),
                 &goat_client,
                 &local_db,
                 vec![
@@ -1472,8 +1473,9 @@ pub async fn run_watch_event_task(
                 }
             }
         }
-        if actor == Actor::Operator {
+        if actor.clone() == Actor::Operator {
             match monitor_events(
+                actor.clone(),
                 &goat_client,
                 &local_db,
                 vec![GatewayEventEntity::ProceedWithdraws],
@@ -1485,67 +1487,6 @@ pub async fn run_watch_event_task(
                     tracing::error!(e)
                 }
             }
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub async fn run_gen_groth16_proof_task(
-    local_db: LocalDB,
-    interval: u64,
-) -> anyhow::Result<String> {
-    let local_operator = get_local_node_info().btc_pub_key;
-    let local_db = &local_db;
-    loop {
-        tokio::time::sleep(Duration::from_secs(interval)).await;
-        let tx_records = {
-            let mut storage_processor = local_db.acquire().await?;
-            storage_processor
-                .get_goat_tx_record_by_prove_status(
-                    &GoatTxType::ProceedWithdraw.to_string(),
-                    &GoatTxProveStatus::Pending.to_string(),
-                )
-                .await?
-        };
-
-        for record in tx_records {
-            let mut tx = local_db.start_transaction().await?;
-            let operator = tx.get_graph_operator(&record.graph_id).await?;
-            if operator.is_none() || operator.unwrap() != local_operator {
-                tx.update_goat_tx_record_prove_status(
-                    &record.graph_id,
-                    &record.instance_id,
-                    &record.tx_type,
-                    &GoatTxProveStatus::NoNeed.to_string(),
-                )
-                .await?;
-                tx.commit().await?;
-                continue;
-            }
-
-            // TODO
-            let proof = "".to_string();
-            let pis = "".to_string();
-            let cast = 0;
-
-            tx.create_or_update_proof_with_pis(ProofWithPis {
-                instance_id: record.graph_id,
-                graph_id: Some(record.graph_id),
-                proof,
-                pis,
-                goat_block_number: record.height,
-                proof_cast: 0,
-                created_at: current_time_secs() - cast,
-            })
-            .await?;
-            tx.update_goat_tx_record_prove_status(
-                &record.graph_id,
-                &record.instance_id,
-                &record.tx_type,
-                &GoatTxProveStatus::Proved.to_string(),
-            )
-            .await?;
-            tx.commit().await?;
         }
     }
 }
@@ -1655,7 +1596,7 @@ pub async fn operator_scan_ready_proof(
                             &proof_value.public_values,
                             &proof_value.verifier_id,
                             &proof_value.zkm_version,
-                            "proved",
+                            &GoatTxProveStatus::Proved.to_string(),
                         )
                         .await?;
                 } else {
@@ -1687,20 +1628,14 @@ pub async fn operator_scan_ready_proof(
                     &GoatTxProveStatus::Proved.to_string(),
                 )
                 .await?;
-        } else {
-            warn!(
-                "Graph id :{} proceed withdraw tx extra parse fail, error:{:?}",
-                tx.graph_id,
-                challenge_txid_res.err()
-            );
-            storage_proccessor
-                .update_goat_tx_record_prove_status(
-                    &tx.graph_id,
-                    &tx.instance_id,
-                    &tx.tx_type,
-                    &GoatTxProveStatus::Failed.to_string(),
-                )
-                .await?;
+            // storage_proccessor
+            //     .update_goat_tx_proved_state_by_height(
+            //         &tx.tx_type,
+            //         &GoatTxProveStatus::Pending.to_string(),
+            //         &GoatTxProveStatus::Failed.to_string(),
+            //         tx.height,
+            //     )
+            //     .await?;
         }
         if message_content.is_some() {
             break;

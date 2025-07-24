@@ -8,10 +8,13 @@ pub type VerifyingKey = ark_groth16::VerifyingKey<ark_bn254::Bn254>;
 pub type Groth16Proof = ark_groth16::Proof<ark_bn254::Bn254>;
 pub type PublicInputs = Vec<ark_bn254::Fr>;
 
-pub async fn get_proof_config(db: &LocalDB) -> Result<(i64, i64)> {
+pub async fn get_proof_config(db: &LocalDB) -> Result<(i64, i64, i64)> {
     let mut storage_process = db.acquire().await?;
-    let (block_concurrency, aggregated_block_count) = storage_process.get_proof_config().await?;
-    Ok((block_concurrency, aggregated_block_count))
+
+    let (block_concurrency, aggregated_block_count, start_aggregation_number) =
+        storage_process.get_proof_config().await?;
+
+    Ok((block_concurrency, aggregated_block_count, start_aggregation_number))
 }
 
 pub fn get_latest_groth16_vk() -> Result<VerifyingKey> {
@@ -104,10 +107,17 @@ mod tests {
         const DB_URL: &str = "/tmp/.bitvm2-node.db";
         let db: LocalDB = LocalDB::new(&format!("sqlite:{DB_URL}"), true).await;
 
-        let (block_concurrency, agg_block_count) = get_proof_config(&db).await.unwrap();
+        let (block_concurrency, agg_block_count, start_number) =
+            get_proof_config(&db).await.unwrap();
         println!(
-            "Block proof concurrency: {}. Aggregate block count: {}",
-            block_concurrency, agg_block_count
+            "Block proof concurrency: {}. Aggregate block count: {}. Start aggregation number: {}",
+            block_concurrency, agg_block_count, start_number,
         );
+    }
+    #[tokio::test]
+    async fn test_create_db() {
+        const DB_URL: &str = "/tmp/.bitvm2-node.db";
+        let db: LocalDB = LocalDB::new(&format!("sqlite:{DB_URL}"), true).await;
+        db.migrate().await;
     }
 }
