@@ -4,6 +4,7 @@ mod handler;
 mod node;
 pub(crate) mod proof;
 pub mod routes;
+pub use bitvm2::UTXO;
 
 use crate::client::BTCClient;
 use crate::env::get_network;

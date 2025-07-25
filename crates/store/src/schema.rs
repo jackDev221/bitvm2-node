@@ -33,6 +33,19 @@ pub struct NodesOverview {
     pub offline_relayer: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum BridgeInStatus {
+    #[default]
+    Submitted,
+    SubmittedFailed,
+    Presigned,
+    PresignedFailed, // includes operator and Committee presigns
+    L1Broadcasted,
+    L2Minted, // success
+    L2MintedFailed,
+    Discarded, // Pegin tx utxo has been spent
+}
+
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
 pub struct Instance {
     pub instance_id: Uuid,
@@ -60,18 +73,6 @@ impl Instance {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub enum BridgeInStatus {
-    #[default]
-    Submitted,
-    SubmittedFailed,
-    Presigned,
-    PresignedFailed, // includes operator and Committee presigns
-    L1Broadcasted,
-    L2Minted, // success
-    L2MintedFailed,
-}
-
 impl FromStr for BridgeInStatus {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -83,6 +84,7 @@ impl FromStr for BridgeInStatus {
             "L1Broadcasted" => Ok(BridgeInStatus::L1Broadcasted),
             "L2Minted" => Ok(BridgeInStatus::L2Minted),
             "L2MintedFailed" => Ok(BridgeInStatus::L2MintedFailed),
+            "Discarded" => Ok(BridgeInStatus::Discarded),
             _ => Err(()),
         }
     }
@@ -106,7 +108,7 @@ pub enum GraphStatus {
     Assert,
     Take1,
     Take2,
-    Disprove, // fail to reimbursement
+    Disprove,
 
     Created,
     Presigned,
@@ -132,7 +134,6 @@ impl FromStr for GraphStatus {
             "Take2" => Ok(GraphStatus::Take2),
             "Disprove" => Ok(GraphStatus::Disprove),
             "Obsoleted" => Ok(GraphStatus::Obsoleted),
-
             "Created" => Ok(GraphStatus::Created),
             "Presigned" => Ok(GraphStatus::Presigned),
             "L2Recorded" => Ok(GraphStatus::L2Recorded),
@@ -456,6 +457,7 @@ pub enum MessageType {
     Take2Ready,
     Take2Sent,
     DisproveSent,
+    InstanceDiscarded,
 }
 impl std::fmt::Display for MessageType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

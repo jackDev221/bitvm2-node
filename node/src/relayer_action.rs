@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::action::{ChallengeSent, CreateInstance, DisproveSent};
+use crate::action::{ChallengeSent, CreateInstance, DisproveSent, InstanceDiscarded};
 use crate::client::chain::chain_adaptor::WithdrawStatus;
 use crate::client::graph_query::{
     BlockRange, CancelWithdrawEvent, GatewayEventEntity, InitWithdrawEvent, ProceedWithdrawEvent,
@@ -11,7 +11,7 @@ use crate::env::{
     GRAPH_OPERATOR_DATA_UPLOAD_TIME_EXPIRED, INSTANCE_PRESIGNED_TIME_EXPIRED,
     LOAD_HISTORY_EVENT_NO_WOKING_MAX_SECS, MESSAGE_BROADCAST_MAX_TIMES, MESSAGE_EXPIRE_TIME,
 };
-use crate::rpc_service::{P2pUserData, current_time_secs};
+use crate::rpc_service::{P2pUserData, UTXO, current_time_secs};
 use crate::utils::{
     create_goat_tx_record, finish_withdraw_disproved, obsolete_sibling_graphs, outpoint_spent_txid,
     reflect_goat_address, strip_hex_prefix_owned, update_graph_fields,
@@ -43,7 +43,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
 use store::{
     BridgeInStatus, BridgePath, GoatTxProveStatus, GoatTxRecord, GoatTxType, GraphStatus,
-    GraphTickActionMetaData, MessageState, MessageType, WatchContract, WatchContractStatus,
+    GraphTickActionMetaData, MessageState, MessageType, WatchContract,
+    WatchContractStatus,
 };
 use tokio::time::sleep;
 use tracing::{info, warn};
@@ -558,7 +559,7 @@ pub async fn scan_bridge_in_prepare(
 }
 
 pub async fn scan_l1_broadcast_txs(
-    _swarm: &mut Swarm<AllBehaviours>,
+    swarm: &mut Swarm<AllBehaviours>,
     local_db: &LocalDB,
     btc_client: &BTCClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -576,7 +577,7 @@ pub async fn scan_l1_broadcast_txs(
         .await?;
 
     info!("Starting into scan_l1_broadcast_txs, need to check instance_size:{} ", instances.len());
-
+    let mut discarded_instances: Vec<Uuid> = vec![];
     for instance in instances {
         if instance.pegin_txid.is_none() {
             warn!("instance:{}, pegin txid is none", instance.instance_id);
@@ -602,9 +603,71 @@ pub async fn scan_l1_broadcast_txs(
             }
         } else {
             info!("scan_l1_broadcast_txs: {} not onchain ", tx_id.to_string());
+            if let Ok(is_discarded) = check_pegin_tx_input_status(
+                btc_client,
+                instance.instance_id,
+                instance.input_uxtos.clone(),
+            )
+            .await
+                && is_discarded
+            {
+                discarded_instances.push(instance.instance_id);
+            }
         }
     }
+    if !discarded_instances.is_empty() {
+        info!("update_l1_broadcast_txs: {} discarded instances", discarded_instances.len());
+        let mut tx = local_db.start_transaction().await?;
+        tx.update_batch_instance_status(
+            &BridgeInStatus::Discarded.to_string(),
+            &discarded_instances,
+        )
+        .await?;
+        tx.update_graphs_status_by_instance_ids(
+            &GraphStatus::Obsoleted.to_string(),
+            &discarded_instances,
+        )
+        .await?;
+        for instance_id in discarded_instances.iter() {
+            tx.add_message_broadcast_times(
+                instance_id,
+                &Uuid::nil(),
+                &MessageType::InstanceDiscarded.to_string(),
+                1,
+            )
+            .await?
+        }
+        let message_content = GOATMessageContent::InstanceDiscarded(InstanceDiscarded {
+            instance_ids: discarded_instances,
+        });
+        send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
+        tx.commit().await?;
+    }
     Ok(())
+}
+
+pub async fn check_pegin_tx_input_status(
+    btc_client: &BTCClient,
+    instance_id: Uuid,
+    input_uxtos: String,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    info!("check_pegin_tx_input_status for instance:{instance_id}");
+    let utxos: Vec<UTXO> = serde_json::from_str(&input_uxtos)?;
+    let mut input_utxo_used = false;
+    for utxo in utxos {
+        if outpoint_spent_txid(btc_client, &Txid::from_str(&utxo.txid)?, utxo.vout as u64)
+            .await?
+            .is_some()
+        {
+            info!(
+                "check_pegin_tx_input_status for instance:{instance_id} input txid {} has been used",
+                utxo.txid
+            );
+            input_utxo_used = true;
+            break;
+        }
+    }
+    Ok(input_utxo_used)
 }
 
 pub async fn scan_post_pegin_data(

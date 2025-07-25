@@ -54,6 +54,7 @@ pub enum GOATMessageContent {
     ResponseNodeInfo(NodeInfo),
     SyncGraphRequest(SyncGraphRequest),
     SyncGraph(SyncGraph),
+    InstanceDiscarded(InstanceDiscarded),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -193,6 +194,11 @@ pub struct SyncGraph {
     pub graph_id: Uuid,
     pub graph: SimplifiedBitvm2Graph,
     pub graph_status: GraphStatus,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct InstanceDiscarded {
+    pub instance_ids: Vec<Uuid>,
 }
 
 impl GOATMessage {
@@ -1211,7 +1217,7 @@ pub async fn recv_and_dispatch(
         (GOATMessageContent::DisproveSent(receive_data), Actor::Relayer) => {
             tracing::info!("Handle DisproveSent");
             let graph =
-                get_graph(local_db, receive_data.instance_id, receive_data.graph_id).await?;
+                get_graph(local_db, Some(receive_data.instance_id), receive_data.graph_id).await?;
 
             if graph.challenge_txid.is_none() || graph.assert_final_txid.is_none() {
                 tracing::warn!(
@@ -1404,6 +1410,47 @@ pub async fn recv_and_dispatch(
                 }
                 obsolete_sibling_graphs(local_db, receive_data.instance_id, receive_data.graph_id)
                     .await?;
+            }
+        }
+
+        (GOATMessageContent::InstanceDiscarded(receive_data), Actor::Operator) => {
+            tracing::info!("Handle InstanceDiscarded:{:?}", receive_data.instance_ids);
+            let graph_ids =
+                get_graphs_ids_by_instance_ids(local_db, &receive_data.instance_ids).await?;
+            let graph_ids_len = graph_ids.len();
+            // recycle btc
+            let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
+            for graph_id in graph_ids {
+                let operator_graph_pubkey: PublicKey =
+                    master_key.keypair_for_graph(graph_id).public_key().into();
+                let graph = get_bitvm2_graph_from_db(local_db, Uuid::nil(), graph_id).await?;
+                if graph.parameters.operator_pubkey != operator_graph_pubkey {
+                    tracing::info!("graph :{graph_id} not local graph, no need to recycle",);
+                    continue;
+                }
+                let prekickoff_txid = graph.pre_kickoff.tx().compute_txid();
+                if outpoint_available(btc_client, &prekickoff_txid, 0).await? {
+                    tracing::info!(
+                        "recycle btc,  graph: {graph_id} , pre_kickoff: {prekickoff_txid}",
+                    );
+                    recycle_prekickoff_tx(
+                        btc_client,
+                        graph_id,
+                        OperatorMasterKey::new(env::get_bitvm_key()?),
+                        prekickoff_txid,
+                    )
+                    .await?;
+                }
+            }
+            if graph_ids_len > 0 {
+                tracing::info!("update {graph_ids_len} graphs  state to Obsoleted");
+                // update graphs
+                update_graphs_status_by_instance_ids(
+                    local_db,
+                    &GraphStatus::Obsoleted.to_string(),
+                    &receive_data.instance_ids,
+                )
+                .await?;
             }
         }
 

@@ -1074,7 +1074,7 @@ pub async fn update_graph(
 }
 pub async fn get_graph(
     local_db: &LocalDB,
-    instance_id: Uuid,
+    instance_id: Option<Uuid>,
     graph_id: Uuid,
 ) -> Result<Graph, Box<dyn std::error::Error>> {
     let mut storage_process = local_db.acquire().await?;
@@ -1084,7 +1084,9 @@ pub async fn get_graph(
         return Err(format!("graph:{graph_id} is not record in db").into());
     };
     let graph = graph_op.unwrap();
-    if graph.instance_id.ne(&instance_id) {
+    if let Some(instance_id) = instance_id
+        && graph.instance_id.ne(&instance_id)
+    {
         return Err(format!(
             "grap with graph_id:{graph_id} has instance_id:{} not match exp instance:{instance_id}",
             graph.instance_id,
@@ -1099,6 +1101,7 @@ pub async fn get_bitvm2_graph_from_db(
     instance_id: Uuid,
     graph_id: Uuid,
 ) -> Result<Bitvm2Graph, Box<dyn std::error::Error>> {
+    let instance_id = if instance_id == Uuid::nil() { None } else { Some(instance_id) };
     let graph = get_graph(local_db, instance_id, graph_id).await?;
     if graph.raw_data.is_none() {
         return Err(format!("grap with graph_id:{graph_id} raw data is none").into());
@@ -1187,6 +1190,24 @@ pub async fn get_graph_status(
         GraphStatus::from_str(&graph.status)
             .map_err(|_| format!("unknown graph status: {}", graph.status))?,
     ))
+}
+
+pub async fn update_graphs_status_by_instance_ids(
+    local_db: &LocalDB,
+    status: &str,
+    instance_ids: &[Uuid],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut storage_process = local_db.acquire().await?;
+    storage_process.update_graphs_status_by_instance_ids(status, instance_ids).await?;
+    Ok(())
+}
+
+pub async fn get_graphs_ids_by_instance_ids(
+    local_db: &LocalDB,
+    instance_ids: &[Uuid],
+) -> Result<Vec<Uuid>, Box<dyn std::error::Error>> {
+    let mut storage_process = local_db.acquire().await?;
+    Ok(storage_process.get_graphs_ids_by_instance_ids(instance_ids).await?)
 }
 
 /// Returns:
