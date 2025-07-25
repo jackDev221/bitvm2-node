@@ -401,6 +401,28 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
+    pub async fn update_batch_instance_status(
+        &mut self,
+        status: &str,
+        ids: &[Uuid],
+    ) -> anyhow::Result<()> {
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let query_str = format!(
+            "UPDATE instance \
+            SET status = \'{status}\',
+                updated_at = {current_time}
+            WHERE hex(instance_id)
+                 COLLATE NOCASE IN ({})",
+            create_place_holders(ids)
+        );
+        let mut update_query = sqlx::query(&query_str);
+        for id in ids {
+            update_query = update_query.bind(hex::encode(id));
+        }
+        update_query.execute(self.conn()).await?;
+        Ok(())
+    }
+
     pub async fn update_graph_fields(&mut self, params: UpdateGraphParams) -> anyhow::Result<()> {
         let mut update_fields = vec![];
         if let Some(status) = params.status {
@@ -666,6 +688,28 @@ impl<'a> StorageProcessor<'a> {
         .fetch_all(self.conn())
         .await?;
         Ok(res)
+    }
+
+    pub async fn update_graphs_state_by_instance_ids(
+        &mut self,
+        status: &str,
+        ids: &[Uuid],
+    ) -> anyhow::Result<()> {
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let query_str = format!(
+            "UPDATE graph SET \
+                status = \'{status}\',
+                updated_at = {current_time}
+            WHERE hex(instance_id)
+                     COLLATE NOCASE IN ({})",
+            create_place_holders(ids)
+        );
+        let mut update_query = sqlx::query(&query_str);
+        for id in ids {
+            update_query = update_query.bind(hex::encode(id));
+        }
+        update_query.execute(self.conn()).await?;
+        Ok(())
     }
 
     pub async fn update_node_timestamp(
