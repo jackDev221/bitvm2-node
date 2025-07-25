@@ -1891,9 +1891,12 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_groth16_proof(
         &mut self,
         block_number: i64,
+        start_number: i64,
+        real_numbers: &str,
         proof: &[u8],
         public_values: &[u8],
         verifier_id: &str,
@@ -1905,15 +1908,19 @@ impl<'a> StorageProcessor<'a> {
         let public_values = hex::encode(public_values);
         sqlx::query!(
             "INSERT INTO groth16_proof
-                         (block_number, proof, public_values, verifier_id, zkm_version, state, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         (block_number, start_number, real_numbers, proof, public_values, verifier_id, zkm_version, state, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                          ON CONFLICT(block_number) DO UPDATE SET proof         = excluded.proof,
                                                                  public_values = excluded.public_values,
+                                                                 start_number = excluded.start_number,
+                                                                 real_numbers = excluded.real_numbers,
                                                                  verifier_id   = excluded.verifier_id,
                                                                  zkm_version   = excluded.zkm_version,
                                                                  state         = excluded.state,
                                                                  updated_at    = excluded.updated_at",
             block_number,
+            start_number,
+            real_numbers,
             proof,
             public_values,
             verifier_id,
