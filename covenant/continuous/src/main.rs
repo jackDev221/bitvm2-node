@@ -150,11 +150,24 @@ where
     C: ExecutorComponents<Network = Ethereum>,
     P: Provider<Ethereum> + Clone + 'static,
 {
-    let mut retry_count = 0;
-
     // Wait for the block to be available in the HTTP provider
-    executor.wait_for_block(number).await?;
+    let mut retry_count = 0;
+    loop {
+        match executor.wait_for_block(number).await {
+            Ok(_) => break,
+            Err(err) => {
+                warn!("Failed to wait block {number}: {err}, retrying {retry_count}...");
+                if retry_count > max_retries {
+                    error!("Max retries {retry_count} reached for block: {number}");
+                    return Err(err);
+                }
+                retry_count += 1;
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+        }
+    }
 
+    let mut retry_count = 0;
     loop {
         match executor.execute(number).await {
             Ok(_) => {
@@ -162,11 +175,12 @@ where
             }
             Err(err) => {
                 warn!("Failed to execute block {number}: {err}, retrying {retry_count}...");
-                retry_count += 1;
                 if retry_count > max_retries {
                     error!("Max retries {retry_count} reached for block: {number}");
                     return Err(err);
                 }
+                retry_count += 1;
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         }
     }
@@ -178,7 +192,7 @@ async fn calc_block_number(db: &db::PersistToDB, restart: bool, arg_number: u64)
         let last_number = db.get_last_number().await.unwrap();
         tracing::info!("last number: {:?}", last_number);
         if last_number.is_some() {
-            return (last_number.unwrap() + 1) as u64;
+            return (last_number.unwrap()) as u64;
         }
     }
 
