@@ -675,7 +675,10 @@ If a graph for the instance is created, the count must be greater than or equal 
   "total_blocks": "number",
   "avg_block_proof": "number",
   "avg_aggregation_proof": "number",
-  "avg_groth16_proof": "number"
+  "avg_groth16_proof": "number",
+  "block_proof_count": "number",
+  "aggregation_proof_count": "number",
+  "groth16_proof_count": "number"
 }
 
 ```

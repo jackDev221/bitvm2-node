@@ -8,20 +8,20 @@ use zkm_verifier::convert_ark;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProofsOverviewQueryParams {
-    #[serde(default = "default_block_proof_avg_range")]
-    pub block_proof_avg_range: i64,
-    #[serde(default = "default_agg_proof_avg_range")]
-    pub agg_proof_avg_range: i64,
-    #[serde(default = "default_groth16_proof_avg_range")]
-    pub groth16_proof_avg_range: i64,
+    #[serde(default = "default_block_proof_count")]
+    pub block_proof_count: i64,
+    #[serde(default = "default_agg_proof_count")]
+    pub agg_proof_count: i64,
+    #[serde(default = "default_groth16_proof_count")]
+    pub groth16_proof_count: i64,
 }
-fn default_block_proof_avg_range() -> i64 {
+fn default_block_proof_count() -> i64 {
     6
 }
-fn default_agg_proof_avg_range() -> i64 {
+fn default_agg_proof_count() -> i64 {
     6
 }
-fn default_groth16_proof_avg_range() -> i64 {
+fn default_groth16_proof_count() -> i64 {
     1
 }
 
@@ -96,6 +96,9 @@ pub struct ProofsOverview {
     pub avg_block_proof: f64,
     pub avg_aggregation_proof: f64,
     pub avg_groth16_proof: f64,
+    pub block_proof_count: i64,
+    pub aggregation_proof_count: i64,
+    pub groth16_proof_count: i64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

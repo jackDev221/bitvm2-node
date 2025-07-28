@@ -172,13 +172,13 @@ pub async fn get_proofs_overview(
 
         let mut storage_process = app_state.local_db.acquire().await?;
         let (total_blocks, sum_block_proof_time, block_proof_count) = storage_process
-            .get_proof_overview(ProofType::BlockProof, params.block_proof_avg_range)
+            .get_proof_overview(ProofType::BlockProof, params.block_proof_count)
             .await?;
         let (_, sum_aggregation_proof_time, aggregation_proof_count) = storage_process
-            .get_proof_overview(ProofType::AggregationProof, params.agg_proof_avg_range)
+            .get_proof_overview(ProofType::AggregationProof, params.agg_proof_count)
             .await?;
         let (_, sum_groth16_proof_times, groth16_proof_count) = storage_process
-            .get_proof_overview(ProofType::Groth16Proof, params.groth16_proof_avg_range)
+            .get_proof_overview(ProofType::Groth16Proof, params.groth16_proof_count)
             .await?;
         let (block_proof_conc, agg_proof_conc, groth16_proof_conc) =
             get_proof_config(&app_state.local_db).await?;
@@ -199,6 +199,9 @@ pub async fn get_proofs_overview(
                 groth16_proof_count,
                 groth16_proof_conc,
             ),
+            block_proof_count,
+            aggregation_proof_count,
+            groth16_proof_count,
         }))
     };
     match async_fn().await {
