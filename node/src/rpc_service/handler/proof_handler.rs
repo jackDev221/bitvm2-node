@@ -1,7 +1,8 @@
 use crate::env::get_proof_server_url;
 use crate::rpc_service::AppState;
 use crate::rpc_service::proof::{
-    BlockProofs, Groth16ProofValue, ProofItem, Proofs, ProofsOverview, ProofsQueryParams,
+    BlockProofs, Groth16ProofValue, ProofItem, Proofs, ProofsOverview, ProofsOverviewQueryParams,
+    ProofsQueryParams,
 };
 use anyhow::bail;
 use axum::Json;
@@ -155,6 +156,7 @@ pub async fn get_proofs(
 #[axum::debug_handler]
 pub async fn get_proofs_overview(
     uri: Uri,
+    Query(params): Query<ProofsOverviewQueryParams>,
     State(app_state): State<Arc<AppState>>,
 ) -> (StatusCode, Json<Option<ProofsOverview>>) {
     let async_fn = || async move {
@@ -169,12 +171,15 @@ pub async fn get_proofs_overview(
         }
 
         let mut storage_process = app_state.local_db.acquire().await?;
-        let (total_blocks, sum_block_proof_time, block_proof_count) =
-            storage_process.get_proof_overview(ProofType::BlockProof).await?;
-        let (_, sum_aggregation_proof_time, aggregation_proof_count) =
-            storage_process.get_proof_overview(ProofType::AggregationProof).await?;
-        let (_, sum_groth16_proof_times, groth16_proof_count) =
-            storage_process.get_proof_overview(ProofType::Groth16Proof).await?;
+        let (total_blocks, sum_block_proof_time, block_proof_count) = storage_process
+            .get_proof_overview(ProofType::BlockProof, params.block_proof_avg_range)
+            .await?;
+        let (_, sum_aggregation_proof_time, aggregation_proof_count) = storage_process
+            .get_proof_overview(ProofType::AggregationProof, params.agg_proof_avg_range)
+            .await?;
+        let (_, sum_groth16_proof_times, groth16_proof_count) = storage_process
+            .get_proof_overview(ProofType::Groth16Proof, params.groth16_proof_avg_range)
+            .await?;
         let (block_proof_conc, agg_proof_conc, groth16_proof_conc) =
             get_proof_config(&app_state.local_db).await?;
         Ok::<Option<ProofsOverview>, Box<dyn std::error::Error>>(Some(ProofsOverview {
