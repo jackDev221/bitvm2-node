@@ -239,9 +239,7 @@ pub async fn recv_and_dispatch(
         if actor == Actor::Relayer {
             do_tick_action(swarm, local_db, btc_client, goat_client).await?;
         }
-        if actor == Actor::Operator
-            && let Some(message) = get_local_unhandle_msg(local_db, actor.clone()).await?
-        {
+        if let Some(message) = get_local_unhandle_msg(local_db, actor.clone()).await? {
             local_message = message.clone();
         } else {
             return Ok(());
@@ -1472,7 +1470,7 @@ pub async fn recv_and_dispatch(
                 .await?;
             }
 
-            if unhanld_graph_info.len() > 0 {
+            if !unhanld_graph_info.is_empty() {
                 tracing::info!(
                     "save unhandle graph info {unhanld_graph_info:?} into db, will be hanlded later"
                 );

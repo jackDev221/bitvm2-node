@@ -37,7 +37,6 @@ pub struct NodesOverview {
 pub enum BridgeInStatus {
     #[default]
     Submitted,
-    SubmittedFailed,
     Presigned,
     PresignedFailed, // includes operator and Committee presigns
     L1Broadcasted,
@@ -78,7 +77,6 @@ impl FromStr for BridgeInStatus {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Submitted" => Ok(BridgeInStatus::Submitted),
-            "SubmittedFailed" => Ok(BridgeInStatus::SubmittedFailed),
             "Presigned" => Ok(BridgeInStatus::Presigned),
             "PresignedFailed" => Ok(BridgeInStatus::PresignedFailed),
             "L1Broadcasted" => Ok(BridgeInStatus::L1Broadcasted),
