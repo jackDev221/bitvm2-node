@@ -1097,7 +1097,7 @@ impl<'a> StorageProcessor<'a> {
             "SELECT id, from_peer, actor, msg_type, content, state
             FROM message
             WHERE state = ?
-              AND updated_at >= ?",
+              AND updated_at >= ? ORDER BY id ASC",
             state,
             expired
         )
