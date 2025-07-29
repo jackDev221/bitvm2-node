@@ -712,18 +712,21 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
-    pub async fn get_graphs_ids_by_instance_ids(
+    pub async fn get_graphs_ids_and_operator_by_instance_ids(
         &mut self,
         ids: &[Uuid],
-    ) -> anyhow::Result<Vec<Uuid>> {
+    ) -> anyhow::Result<Vec<(Uuid, Uuid, String)>> {
         #[derive(sqlx::FromRow)]
         struct GraphIdRow {
             pub graph_id: Uuid,
+            pub instance_id: Uuid,
+            pub operator: String,
         }
         let query_str = format!(
-            "SELECT graph_id FROM graph
-            WHERE hex(instance_id)
-                     COLLATE NOCASE IN ({})",
+            "SELECT graph_id, instance_id, operator
+             FROM graph
+             WHERE hex(instance_id)
+                       COLLATE NOCASE IN ({})",
             create_place_holders(ids)
         );
         let mut update_query = sqlx::query_as::<_, GraphIdRow>(&query_str);
@@ -731,7 +734,7 @@ impl<'a> StorageProcessor<'a> {
             update_query = update_query.bind(hex::encode(id));
         }
         let graph_ids = update_query.fetch_all(self.conn()).await?;
-        Ok(graph_ids.into_iter().map(|v| v.graph_id).collect())
+        Ok(graph_ids.into_iter().map(|v| (v.graph_id, v.instance_id, v.operator)).collect())
     }
 
     pub async fn update_node_timestamp(

@@ -43,8 +43,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
 use store::{
     BridgeInStatus, BridgePath, GoatTxProveStatus, GoatTxRecord, GoatTxType, GraphStatus,
-    GraphTickActionMetaData, MessageState, MessageType, WatchContract,
-    WatchContractStatus,
+    GraphTickActionMetaData, MessageState, MessageType, WatchContract, WatchContractStatus,
 };
 use tokio::time::sleep;
 use tracing::{info, warn};
@@ -637,9 +636,10 @@ pub async fn scan_l1_broadcast_txs(
             )
             .await?
         }
-        let message_content = GOATMessageContent::InstanceDiscarded(InstanceDiscarded {
-            instance_ids: discarded_instances,
-        });
+        let graph_infos =
+            tx.get_graphs_ids_and_operator_by_instance_ids(&discarded_instances).await?;
+        let message_content =
+            GOATMessageContent::InstanceDiscarded(InstanceDiscarded { graph_infos });
         send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
         tx.commit().await?;
     }

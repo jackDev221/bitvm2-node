@@ -1202,14 +1202,6 @@ pub async fn update_graphs_status_by_instance_ids(
     Ok(())
 }
 
-pub async fn get_graphs_ids_by_instance_ids(
-    local_db: &LocalDB,
-    instance_ids: &[Uuid],
-) -> Result<Vec<Uuid>, Box<dyn std::error::Error>> {
-    let mut storage_process = local_db.acquire().await?;
-    Ok(storage_process.get_graphs_ids_by_instance_ids(instance_ids).await?)
-}
-
 /// Returns:
 /// - `Ok(true)` tx confirmed,
 /// - `Ok(false)` tx not confirmed, exceeds the maximum waiting time

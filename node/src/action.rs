@@ -198,7 +198,8 @@ pub struct SyncGraph {
 
 #[derive(Serialize, Deserialize)]
 pub struct InstanceDiscarded {
-    pub instance_ids: Vec<Uuid>,
+    // (graph_id, instance_id, OperatorPubkey)
+    pub graph_infos: Vec<(Uuid, Uuid, String)>,
 }
 
 impl GOATMessage {
@@ -1414,20 +1415,28 @@ pub async fn recv_and_dispatch(
         }
 
         (GOATMessageContent::InstanceDiscarded(receive_data), Actor::Operator) => {
-            tracing::info!("Handle InstanceDiscarded:{:?}", receive_data.instance_ids);
-            let graph_ids =
-                get_graphs_ids_by_instance_ids(local_db, &receive_data.instance_ids).await?;
-            let graph_ids_len = graph_ids.len();
+            tracing::info!("Handle InstanceDiscarded:{:?}", receive_data.graph_infos);
+            let instance_ids: Vec<Uuid> =
+                receive_data.graph_infos.iter().map(|(_, v, _)| *v).collect();
             // recycle btc
             let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
-            for graph_id in graph_ids {
+            for (graph_id, instance_id, operator) in receive_data.graph_infos {
                 let operator_graph_pubkey: PublicKey =
                     master_key.keypair_for_graph(graph_id).public_key().into();
-                let graph = get_bitvm2_graph_from_db(local_db, Uuid::nil(), graph_id).await?;
-                if graph.parameters.operator_pubkey != operator_graph_pubkey {
+                if operator != operator_graph_pubkey.to_string() {
                     tracing::info!("graph :{graph_id} not local graph, no need to recycle",);
                     continue;
                 }
+                sync_graph(
+                    swarm,
+                    local_db,
+                    instance_id,
+                    graph_id,
+                    SYNC_GRAPH_INTERVAL,
+                    SYNC_GRAPH_MAX_WAIT_SECS,
+                )
+                .await?;
+                let graph = get_bitvm2_graph_from_db(local_db, instance_id, graph_id).await?;
                 let prekickoff_txid = graph.pre_kickoff.tx().compute_txid();
                 if outpoint_available(btc_client, &prekickoff_txid, 0).await? {
                     tracing::info!(
@@ -1442,13 +1451,13 @@ pub async fn recv_and_dispatch(
                     .await?;
                 }
             }
-            if graph_ids_len > 0 {
-                tracing::info!("update {graph_ids_len} graphs  state to Obsoleted");
+            if instance_ids.len() > 0 {
+                tracing::info!("update {} graphs  state to Obsoleted", instance_ids.len());
                 // update graphs
                 update_graphs_status_by_instance_ids(
                     local_db,
                     &GraphStatus::Obsoleted.to_string(),
-                    &receive_data.instance_ids,
+                    &instance_ids,
                 )
                 .await?;
             }
