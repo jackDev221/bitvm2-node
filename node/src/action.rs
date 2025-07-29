@@ -1,11 +1,11 @@
 use crate::client::{BTCClient, GOATClient};
 use crate::env::{
     self, SYNC_GRAPH_INTERVAL, SYNC_GRAPH_MAX_WAIT_SECS, get_local_node_info,
-    get_node_goat_address, get_node_pubkey, get_proof_server_url,
+    get_node_goat_address, get_node_pubkey,
 };
 use crate::middleware::AllBehaviours;
 use crate::relayer_action::do_tick_action;
-use crate::rpc_service::{current_time_secs, routes};
+use crate::rpc_service::current_time_secs;
 use crate::utils::{statics::*, *};
 use crate::{defer, dismiss_defer};
 use anyhow::Result;
@@ -24,7 +24,7 @@ use musig2::{AggNonce, PartialSignature, PubNonce, SecNonce};
 use serde::{Deserialize, Serialize};
 use store::ipfs::IPFS;
 use store::localdb::LocalDB;
-use store::{GoatTxProveStatus, GoatTxType, GraphStatus};
+use store::{GoatTxProveStatus, GoatTxType, GraphStatus, MessageType};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -240,12 +240,7 @@ pub async fn recv_and_dispatch(
             do_tick_action(swarm, local_db, btc_client, goat_client).await?;
         }
         if actor == Actor::Operator
-            && let Some(message) = operator_scan_ready_proof(
-                local_db,
-                get_proof_server_url(),
-                routes::v1::PROOFS_GROTH16_BASE,
-            )
-            .await?
+            && let Some(message) = get_local_unhandle_msg(local_db, actor.clone()).await?
         {
             local_message = message.clone();
         } else {
@@ -1416,26 +1411,37 @@ pub async fn recv_and_dispatch(
 
         (GOATMessageContent::InstanceDiscarded(receive_data), Actor::Operator) => {
             tracing::info!("Handle InstanceDiscarded:{:?}", receive_data.graph_infos);
-            let instance_ids: Vec<Uuid> =
-                receive_data.graph_infos.iter().map(|(_, v, _)| *v).collect();
             // recycle btc
             let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
+            let mut handle_graph_ids: Vec<Uuid> = vec![];
+            let mut unhanld_graph_info: Vec<(Uuid, Uuid, String)> = vec![];
             for (graph_id, instance_id, operator) in receive_data.graph_infos {
                 let operator_graph_pubkey: PublicKey =
                     master_key.keypair_for_graph(graph_id).public_key().into();
                 if operator != operator_graph_pubkey.to_string() {
                     tracing::info!("graph :{graph_id} not local graph, no need to recycle",);
+                    handle_graph_ids.push(graph_id);
                     continue;
                 }
-                sync_graph(
-                    swarm,
-                    local_db,
-                    instance_id,
-                    graph_id,
-                    SYNC_GRAPH_INTERVAL,
-                    SYNC_GRAPH_MAX_WAIT_SECS,
-                )
-                .await?;
+
+                let status_op =
+                    sync_graph_without_waiting(swarm, local_db, instance_id, graph_id).await?;
+                if status_op.is_none() {
+                    tracing::info!(
+                        "start sync graph at graph_id:{graph_id}, instance_id:{instance_id}"
+                    );
+                    unhanld_graph_info.push((graph_id, instance_id, operator));
+                    continue;
+                }
+                if let Some(status) = status_op
+                    && status != GraphStatus::CommitteePresigned
+                {
+                    tracing::info!(
+                        "start sync graph at graph_id:{graph_id}, instance_id:{instance_id}, status is {status}, neq CommitteePresigned"
+                    );
+                    handle_graph_ids.push(graph_id);
+                    continue;
+                }
                 let graph = get_bitvm2_graph_from_db(local_db, instance_id, graph_id).await?;
                 let prekickoff_txid = graph.pre_kickoff.tx().compute_txid();
                 if outpoint_available(btc_client, &prekickoff_txid, 0).await? {
@@ -1449,15 +1455,37 @@ pub async fn recv_and_dispatch(
                         prekickoff_txid,
                     )
                     .await?;
+                    handle_graph_ids.push(graph_id);
                 }
             }
-            if instance_ids.len() > 0 {
-                tracing::info!("update {} graphs  state to Obsoleted", instance_ids.len());
-                // update graphs
-                update_graphs_status_by_instance_ids(
+
+            for graph_id in handle_graph_ids {
+                update_graph_fields(
                     local_db,
-                    &GraphStatus::Obsoleted.to_string(),
-                    &instance_ids,
+                    graph_id,
+                    Some(GraphStatus::Discarded.to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
+            }
+
+            if unhanld_graph_info.len() > 0 {
+                tracing::info!(
+                    "save unhandle graph info {unhanld_graph_info:?} into db, will be hanlded later"
+                );
+                let message_content = GOATMessageContent::InstanceDiscarded(InstanceDiscarded {
+                    graph_infos: unhanld_graph_info,
+                });
+                let message = GOATMessage::from_typed(Actor::Operator, &message_content)?;
+                save_unhandle_message(
+                    local_db,
+                    &from_peer_id.to_string(),
+                    &Actor::Operator.to_string(),
+                    &MessageType::InstanceDiscarded.to_string(),
+                    serde_json::to_vec(&message)?,
                 )
                 .await?;
             }
@@ -1680,12 +1708,19 @@ pub async fn recv_and_dispatch(
                 tracing::warn!("receive SyncGraph message but not from Relayer, ignored");
                 return Ok(());
             }
+            let graph_status = if receive_data.graph_status == GraphStatus::Discarded {
+                // only get discarded for pre-kickoff recycle, need status to been CommitteePresigned
+                Some(GraphStatus::CommitteePresigned.to_string())
+            } else {
+                Some(receive_data.graph_status.to_string())
+            };
+
             store_graph(
                 local_db,
                 receive_data.instance_id,
                 receive_data.graph_id,
                 &Bitvm2Graph::from_simplified(receive_data.graph)?,
-                Some(receive_data.graph_status.to_string()),
+                graph_status,
             )
             .await?;
         }
@@ -1693,6 +1728,24 @@ pub async fn recv_and_dispatch(
         _ => {}
     }
     Ok(())
+}
+
+async fn sync_graph_without_waiting(
+    swarm: &mut Swarm<AllBehaviours>,
+    local_db: &LocalDB,
+    instance_id: Uuid,
+    graph_id: Uuid,
+) -> Result<Option<GraphStatus>, Box<dyn std::error::Error>> {
+    if let Ok(status_op) = get_graph_status(local_db, instance_id, graph_id).await
+        && status_op.is_some()
+    {
+        Ok(status_op)
+    } else {
+        let message_content =
+            GOATMessageContent::SyncGraphRequest(SyncGraphRequest { instance_id, graph_id });
+        send_to_peer(swarm, GOATMessage::from_typed(Actor::Relayer, &message_content)?)?;
+        Ok(None)
+    }
 }
 
 async fn sync_graph(

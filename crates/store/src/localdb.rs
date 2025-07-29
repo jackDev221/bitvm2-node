@@ -1066,7 +1066,7 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
-    pub async fn filter_messages(
+    pub async fn filter_type_messages(
         &mut self,
         msg_type: String,
         state: String,
@@ -1080,6 +1080,24 @@ impl<'a> StorageProcessor<'a> {
               AND state = ?
               AND updated_at >= ?",
             msg_type,
+            state,
+            expired
+        )
+        .fetch_all(self.conn())
+        .await?;
+        Ok(res)
+    }
+    pub async fn filter_messages(
+        &mut self,
+        state: String,
+        expired: i64,
+    ) -> anyhow::Result<Vec<Message>> {
+        let res = sqlx::query_as!(
+            Message,
+            "SELECT id, from_peer, actor, msg_type, content, state
+            FROM message
+            WHERE state = ?
+              AND updated_at >= ?",
             state,
             expired
         )

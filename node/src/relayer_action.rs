@@ -518,7 +518,7 @@ pub async fn scan_bridge_in_prepare(
     let current_time =
         std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
     let messages = storage_process
-        .filter_messages(
+        .filter_type_messages(
             MessageType::BridgeInData.to_string(),
             MessageState::Pending.to_string(),
             current_time - MESSAGE_EXPIRE_TIME,
@@ -623,7 +623,7 @@ pub async fn scan_l1_broadcast_txs(
         )
         .await?;
         tx.update_graphs_status_by_instance_ids(
-            &GraphStatus::Obsoleted.to_string(),
+            &GraphStatus::Discarded.to_string(),
             &discarded_instances,
         )
         .await?;

@@ -118,6 +118,7 @@ pub enum GraphStatus {
     Asserting,
     Disproving,
     Obsoleted, // reimbursement by other operators
+    Discarded,
 }
 
 impl FromStr for GraphStatus {
@@ -134,6 +135,7 @@ impl FromStr for GraphStatus {
             "Take2" => Ok(GraphStatus::Take2),
             "Disprove" => Ok(GraphStatus::Disprove),
             "Obsoleted" => Ok(GraphStatus::Obsoleted),
+            "Discarded" => Ok(GraphStatus::Discarded),
             "Created" => Ok(GraphStatus::Created),
             "Presigned" => Ok(GraphStatus::Presigned),
             "L2Recorded" => Ok(GraphStatus::L2Recorded),

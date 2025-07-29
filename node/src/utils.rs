@@ -11,8 +11,8 @@ use crate::env;
 use crate::env::*;
 use crate::middleware::AllBehaviours;
 use crate::relayer_action::monitor_events;
-use crate::rpc_service::current_time_secs;
 use crate::rpc_service::proof::Groth16ProofValue;
+use crate::rpc_service::{current_time_secs, routes};
 use alloy::primitives::Address as EvmAddress;
 use alloy::providers::ProviderBuilder;
 use bitcoin::consensus::encode::{deserialize_hex, serialize_hex};
@@ -60,7 +60,7 @@ use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
 use store::{
     BridgeInStatus, GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph,
-    GraphStatus, Node,
+    GraphStatus, Message, MessageState, MessageType, Node,
 };
 use stun_client::{Attribute, Class, Client};
 use tracing::warn;
@@ -947,6 +947,30 @@ pub async fn update_graph_fields(
         .await?)
 }
 
+pub async fn save_unhandle_message(
+    local_db: &LocalDB,
+    from_peer_id: &str,
+    actor: &str,
+    msy_type: &str,
+    content: Vec<u8>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut storage_process = local_db.acquire().await?;
+    storage_process
+        .create_message(
+            Message {
+                id: 0,
+                actor: actor.to_string(),
+                from_peer: from_peer_id.to_string(),
+                msg_type: msy_type.to_string(),
+                content,
+                state: MessageState::Pending.to_string(),
+            },
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+        )
+        .await?;
+    Ok(())
+}
+
 pub async fn create_goat_tx_record(
     local_db: &LocalDB,
     goat_client: &GOATClient,
@@ -1553,6 +1577,46 @@ pub fn reflect_goat_address(addr_op: Option<String>) -> (bool, Option<String>) {
     }
 
     (false, None)
+}
+
+pub async fn get_local_unhandle_msg(
+    local_db: &LocalDB,
+    actor: Actor,
+) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+    // 1. create  groth16 proof for operator
+    if actor == Actor::Operator
+        && let Some(content) = operator_scan_ready_proof(
+            local_db,
+            get_proof_server_url(),
+            routes::v1::PROOFS_GROTH16_BASE,
+        )
+        .await?
+    {
+        return Ok(Some(content));
+    }
+
+    // 2. check unhandle msg from message table
+    let mut storage_process = local_db.acquire().await?;
+    let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    storage_process.set_messages_expired(current_time - MESSAGE_EXPIRE_TIME).await?;
+    let messages = storage_process
+        .filter_messages(MessageState::Pending.to_string(), current_time - MESSAGE_EXPIRE_TIME)
+        .await?;
+
+    for message in messages {
+        if message.msg_type != MessageType::BridgeInData.to_string() {
+            storage_process
+                .update_messages_state(
+                    &[message.id],
+                    MessageState::Processed.to_string(),
+                    current_time,
+                )
+                .await?;
+            return Ok(Some(message.content));
+        }
+    }
+
+    Ok(None)
 }
 
 pub async fn operator_scan_ready_proof(
