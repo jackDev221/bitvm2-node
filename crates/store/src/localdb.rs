@@ -1,7 +1,7 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, GrapFullData, Graph, GraphTickActionMetaData, Instance,
+    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, Graph, GraphFullData, GraphTickActionMetaData, Instance,
     Message, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofInfo, ProofType,
     ProofWithPis, PubKeyCollect, PubKeyCollectMetaData, WatchContract,
 };
@@ -401,6 +401,28 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
+    pub async fn update_batch_instance_status(
+        &mut self,
+        status: &str,
+        ids: &[Uuid],
+    ) -> anyhow::Result<()> {
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let query_str = format!(
+            "UPDATE instance \
+            SET status = \'{status}\',
+                updated_at = {current_time}
+            WHERE hex(instance_id)
+                 COLLATE NOCASE IN ({})",
+            create_place_holders(ids)
+        );
+        let mut update_query = sqlx::query(&query_str);
+        for id in ids {
+            update_query = update_query.bind(hex::encode(id));
+        }
+        update_query.execute(self.conn()).await?;
+        Ok(())
+    }
+
     pub async fn update_graph_fields(&mut self, params: UpdateGraphParams) -> anyhow::Result<()> {
         let mut update_fields = vec![];
         if let Some(status) = params.status {
@@ -499,7 +521,7 @@ impl<'a> StorageProcessor<'a> {
     pub async fn filter_graphs(
         &mut self,
         mut params: FilterGraphParams,
-    ) -> anyhow::Result<(Vec<GrapFullData>, i64)> {
+    ) -> anyhow::Result<(Vec<GraphFullData>, i64)> {
         let mut graph_query_str = "SELECT graph.graph_id,
                                                  graph.instance_id,
                                                  instance.bridge_path AS bridge_path,
@@ -618,7 +640,7 @@ impl<'a> StorageProcessor<'a> {
             graph_query_str = format!("{graph_query_str} OFFSET {offset}");
         }
         tracing::info!("{graph_query_str}");
-        let graphs = sqlx::query_as::<_, GrapFullData>(graph_query_str.as_str())
+        let graphs = sqlx::query_as::<_, GraphFullData>(graph_query_str.as_str())
             .fetch_all(self.conn())
             .await?;
         let total_graphs = sqlx::query(graph_count_str.as_str())
@@ -666,6 +688,53 @@ impl<'a> StorageProcessor<'a> {
         .fetch_all(self.conn())
         .await?;
         Ok(res)
+    }
+
+    pub async fn update_graphs_status_by_instance_ids(
+        &mut self,
+        status: &str,
+        ids: &[Uuid],
+    ) -> anyhow::Result<()> {
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let query_str = format!(
+            "UPDATE graph SET \
+                status = \'{status}\',
+                updated_at = {current_time}
+            WHERE hex(instance_id)
+                     COLLATE NOCASE IN ({})",
+            create_place_holders(ids)
+        );
+        let mut update_query = sqlx::query(&query_str);
+        for id in ids {
+            update_query = update_query.bind(hex::encode(id));
+        }
+        update_query.execute(self.conn()).await?;
+        Ok(())
+    }
+
+    pub async fn get_graphs_ids_and_operator_by_instance_ids(
+        &mut self,
+        ids: &[Uuid],
+    ) -> anyhow::Result<Vec<(Uuid, Uuid, String)>> {
+        #[derive(sqlx::FromRow)]
+        struct GraphIdRow {
+            pub graph_id: Uuid,
+            pub instance_id: Uuid,
+            pub operator: String,
+        }
+        let query_str = format!(
+            "SELECT graph_id, instance_id, operator
+             FROM graph
+             WHERE hex(instance_id)
+                       COLLATE NOCASE IN ({})",
+            create_place_holders(ids)
+        );
+        let mut update_query = sqlx::query_as::<_, GraphIdRow>(&query_str);
+        for id in ids {
+            update_query = update_query.bind(hex::encode(id));
+        }
+        let graph_ids = update_query.fetch_all(self.conn()).await?;
+        Ok(graph_ids.into_iter().map(|v| (v.graph_id, v.instance_id, v.operator)).collect())
     }
 
     pub async fn update_node_timestamp(
@@ -997,7 +1066,7 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
-    pub async fn filter_messages(
+    pub async fn filter_type_messages(
         &mut self,
         msg_type: String,
         state: String,
@@ -1011,6 +1080,24 @@ impl<'a> StorageProcessor<'a> {
               AND state = ?
               AND updated_at >= ?",
             msg_type,
+            state,
+            expired
+        )
+        .fetch_all(self.conn())
+        .await?;
+        Ok(res)
+    }
+    pub async fn filter_messages(
+        &mut self,
+        state: String,
+        expired: i64,
+    ) -> anyhow::Result<Vec<Message>> {
+        let res = sqlx::query_as!(
+            Message,
+            "SELECT id, from_peer, actor, msg_type, content, state
+            FROM message
+            WHERE state = ?
+              AND updated_at >= ? ORDER BY id ASC",
             state,
             expired
         )

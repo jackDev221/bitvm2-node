@@ -33,6 +33,18 @@ pub struct NodesOverview {
     pub offline_relayer: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub enum BridgeInStatus {
+    #[default]
+    Submitted,
+    Presigned,
+    PresignedFailed, // includes operator and Committee presigns
+    L1Broadcasted,
+    L2Minted, // success
+    L2MintedFailed,
+    Discarded, // Pegin tx utxo has been spent
+}
+
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
 pub struct Instance {
     pub instance_id: Uuid,
@@ -60,29 +72,17 @@ impl Instance {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub enum BridgeInStatus {
-    #[default]
-    Submitted,
-    SubmittedFailed,
-    Presigned,
-    PresignedFailed, // includes operator and Committee presigns
-    L1Broadcasted,
-    L2Minted, // success
-    L2MintedFailed,
-}
-
 impl FromStr for BridgeInStatus {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Submitted" => Ok(BridgeInStatus::Submitted),
-            "SubmittedFailed" => Ok(BridgeInStatus::SubmittedFailed),
             "Presigned" => Ok(BridgeInStatus::Presigned),
             "PresignedFailed" => Ok(BridgeInStatus::PresignedFailed),
             "L1Broadcasted" => Ok(BridgeInStatus::L1Broadcasted),
             "L2Minted" => Ok(BridgeInStatus::L2Minted),
             "L2MintedFailed" => Ok(BridgeInStatus::L2MintedFailed),
+            "Discarded" => Ok(BridgeInStatus::Discarded),
             _ => Err(()),
         }
     }
@@ -106,7 +106,7 @@ pub enum GraphStatus {
     Assert,
     Take1,
     Take2,
-    Disprove, // fail to reimbursement
+    Disprove,
 
     Created,
     Presigned,
@@ -116,6 +116,7 @@ pub enum GraphStatus {
     Asserting,
     Disproving,
     Obsoleted, // reimbursement by other operators
+    Discarded,
 }
 
 impl FromStr for GraphStatus {
@@ -132,7 +133,7 @@ impl FromStr for GraphStatus {
             "Take2" => Ok(GraphStatus::Take2),
             "Disprove" => Ok(GraphStatus::Disprove),
             "Obsoleted" => Ok(GraphStatus::Obsoleted),
-
+            "Discarded" => Ok(GraphStatus::Discarded),
             "Created" => Ok(GraphStatus::Created),
             "Presigned" => Ok(GraphStatus::Presigned),
             "L2Recorded" => Ok(GraphStatus::L2Recorded),
@@ -283,7 +284,7 @@ pub fn convert_to_step_state(ori_status: &str) -> String {
 
 // graph full data contain instance.from and instance.to
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
-pub struct GrapFullData {
+pub struct GraphFullData {
     pub graph_id: Uuid,
     pub instance_id: Uuid,
     pub bridge_path: u8,
@@ -310,7 +311,7 @@ pub struct GrapFullData {
     pub created_at: i64,
 }
 
-impl GrapFullData {
+impl GraphFullData {
     pub fn get_check_tx_param(&self) -> Result<(Option<String>, u32), String> {
         let status = GraphStatus::from_str(&self.status);
         if status.is_err() {
@@ -456,6 +457,7 @@ pub enum MessageType {
     Take2Ready,
     Take2Sent,
     DisproveSent,
+    InstanceDiscarded,
 }
 impl std::fmt::Display for MessageType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
