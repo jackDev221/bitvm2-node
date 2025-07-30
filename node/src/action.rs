@@ -239,7 +239,7 @@ pub async fn recv_and_dispatch(
         if actor == Actor::Relayer {
             do_tick_action(swarm, local_db, btc_client, goat_client).await?;
         }
-        if let Some(message) = get_local_unhandle_msg(local_db, actor.clone()).await? {
+        if let Some(message) = pop_local_unhandle_msg(local_db, actor.clone()).await? {
             local_message = message.clone();
         } else {
             return Ok(());
@@ -1412,7 +1412,7 @@ pub async fn recv_and_dispatch(
             // recycle btc
             let master_key = OperatorMasterKey::new(env::get_bitvm_key()?);
             let mut handle_graph_ids: Vec<Uuid> = vec![];
-            let mut unhanld_graph_info: Vec<(Uuid, Uuid, String)> = vec![];
+            let mut unhandle_graph_info: Vec<(Uuid, Uuid, String)> = vec![];
             for (graph_id, instance_id, operator) in receive_data.graph_infos {
                 let operator_graph_pubkey: PublicKey =
                     master_key.keypair_for_graph(graph_id).public_key().into();
@@ -1428,7 +1428,7 @@ pub async fn recv_and_dispatch(
                     tracing::info!(
                         "start sync graph at graph_id:{graph_id}, instance_id:{instance_id}"
                     );
-                    unhanld_graph_info.push((graph_id, instance_id, operator));
+                    unhandle_graph_info.push((graph_id, instance_id, operator));
                     continue;
                 }
                 if let Some(status) = status_op
@@ -1470,12 +1470,12 @@ pub async fn recv_and_dispatch(
                 .await?;
             }
 
-            if !unhanld_graph_info.is_empty() {
+            if !unhandle_graph_info.is_empty() {
                 tracing::info!(
-                    "save unhandle graph info {unhanld_graph_info:?} into db, will be hanlded later"
+                    "save unhandle graph info {unhandle_graph_info:?} into db, will be hanlded later"
                 );
                 let message_content = GOATMessageContent::InstanceDiscarded(InstanceDiscarded {
-                    graph_infos: unhanld_graph_info,
+                    graph_infos: unhandle_graph_info,
                 });
                 let message = GOATMessage::from_typed(Actor::Operator, &message_content)?;
                 save_unhandle_message(

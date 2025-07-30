@@ -284,7 +284,7 @@ pub fn convert_to_step_state(ori_status: &str) -> String {
 
 // graph full data contain instance.from and instance.to
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
-pub struct GrapFullData {
+pub struct GraphFullData {
     pub graph_id: Uuid,
     pub instance_id: Uuid,
     pub bridge_path: u8,
@@ -311,7 +311,7 @@ pub struct GrapFullData {
     pub created_at: i64,
 }
 
-impl GrapFullData {
+impl GraphFullData {
     pub fn get_check_tx_param(&self) -> Result<(Option<String>, u32), String> {
         let status = GraphStatus::from_str(&self.status);
         if status.is_err() {

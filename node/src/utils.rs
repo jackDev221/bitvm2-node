@@ -1579,7 +1579,7 @@ pub fn reflect_goat_address(addr_op: Option<String>) -> (bool, Option<String>) {
     (false, None)
 }
 
-pub async fn get_local_unhandle_msg(
+pub async fn pop_local_unhandle_msg(
     local_db: &LocalDB,
     actor: Actor,
 ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {

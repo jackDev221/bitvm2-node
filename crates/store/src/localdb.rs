@@ -1,7 +1,7 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, GrapFullData, Graph, GraphTickActionMetaData, Instance,
+    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, Graph, GraphFullData, GraphTickActionMetaData, Instance,
     Message, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofInfo, ProofType,
     ProofWithPis, PubKeyCollect, PubKeyCollectMetaData, WatchContract,
 };
@@ -521,7 +521,7 @@ impl<'a> StorageProcessor<'a> {
     pub async fn filter_graphs(
         &mut self,
         mut params: FilterGraphParams,
-    ) -> anyhow::Result<(Vec<GrapFullData>, i64)> {
+    ) -> anyhow::Result<(Vec<GraphFullData>, i64)> {
         let mut graph_query_str = "SELECT graph.graph_id,
                                                  graph.instance_id,
                                                  instance.bridge_path AS bridge_path,
@@ -640,7 +640,7 @@ impl<'a> StorageProcessor<'a> {
             graph_query_str = format!("{graph_query_str} OFFSET {offset}");
         }
         tracing::info!("{graph_query_str}");
-        let graphs = sqlx::query_as::<_, GrapFullData>(graph_query_str.as_str())
+        let graphs = sqlx::query_as::<_, GraphFullData>(graph_query_str.as_str())
             .fetch_all(self.conn())
             .await?;
         let total_graphs = sqlx::query(graph_count_str.as_str())

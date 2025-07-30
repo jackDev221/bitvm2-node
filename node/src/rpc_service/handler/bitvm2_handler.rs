@@ -20,7 +20,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use store::localdb::FilterGraphParams;
 use store::{
-    BridgeInStatus, BridgePath, GoatTxType, GrapFullData, GraphStatus, Instance, Message,
+    BridgeInStatus, BridgePath, GoatTxType, GraphFullData, GraphStatus, Instance, Message,
     MessageState, MessageType, modify_graph_status,
 };
 use uuid::Uuid;
@@ -625,7 +625,7 @@ pub async fn get_graphs(
 }
 
 pub fn convert_to_rpc_query_data(
-    graph: &GrapFullData,
+    graph: &GraphFullData,
     from_addr: Option<String>,
     bridge_in_status: &[String],
 ) -> Result<Option<GraphRpcQueryData>, Box<dyn std::error::Error>> {
