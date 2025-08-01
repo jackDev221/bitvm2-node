@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT msg_times, updated_at\n             FROM message_broadcast\n             WHERE instance_id = ?\n               AND graph_id = ?\n               AND msg_type = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "msg_times",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "b6c309ee0051b3390f7c7c50dd3ea10d7927aeb3fa53c2aa6207ba67051f369c"
+}

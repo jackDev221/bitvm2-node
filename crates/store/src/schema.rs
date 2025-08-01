@@ -480,6 +480,7 @@ pub struct GraphTickActionMetaData {
     pub assert_commit_txids: Option<String>,
     pub assert_final_txid: Option<String>,
     pub challenge_txid: Option<String>,
+    pub last_msg_send_at: i64,
 }
 
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]

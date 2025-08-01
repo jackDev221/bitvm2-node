@@ -65,6 +65,7 @@ const BTC_NETWORK: Network = Network::Testnet;
 const GOAT_NETWORK: GoatNetwork = GoatNetwork::Test;
 
 pub const MESSAGE_BROADCAST_MAX_TIMES: i64 = 3;
+pub const MESSAGE_RESEND_INTERVAL_SECOND: i64 = 60 * 5;
 pub const MESSAGE_EXPIRE_TIME: i64 = 3600 * 24; // 1 days
 
 pub const GRAPH_OPERATOR_DATA_UPLOAD_TIME_EXPIRED: i64 = 3600 * 48;
