@@ -1349,7 +1349,8 @@ impl<'a> StorageProcessor<'a> {
                         graph.assert_final_txid,
                         graph.challenge_txid,
                         IFNULL(message_broadcast.msg_times, 0) AS msg_times,
-                        IFNULL(message_broadcast.msg_type, '') AS msg_type
+                        IFNULL(message_broadcast.msg_type, '') AS msg_type,
+                        IFNULL(message_broadcast.updated_at, 0) AS last_msg_send_at
                  FROM graph
                           LEFT JOIN message_broadcast ON graph.graph_id = message_broadcast.graph_id AND
                                                          graph.instance_id = message_broadcast.instance_id AND
@@ -1363,25 +1364,22 @@ impl<'a> StorageProcessor<'a> {
         instance_id: &Uuid,
         graph_id: &Uuid,
         msg_type: &str,
-    ) -> anyhow::Result<i64> {
-        let res = sqlx::query(
-            format!(
-                "SELECT msg_times \
-                 FROM message_broadcast \
-                 WHERE hex(instance_id) = \'{}\' COLLATE NOCASE \
-                        AND  hex(graph_id) = \'{}\' COLLATE NOCASE \
-                        AND msg_type = \'{}\'",
-                hex::encode(instance_id),
-                hex::encode(graph_id),
-                msg_type
-            )
-            .as_str(),
+    ) -> anyhow::Result<(i64, i64)> {
+        let res = sqlx::query!(
+            "SELECT msg_times, updated_at
+             FROM message_broadcast
+             WHERE instance_id = ?
+               AND graph_id = ?
+               AND msg_type = ?",
+            instance_id,
+            graph_id,
+            msg_type
         )
         .fetch_optional(self.conn())
         .await?;
         match res {
-            Some(row) => Ok(row.get::<i64, &str>("msg_times")),
-            None => Ok(0),
+            Some(row) => Ok((row.msg_times, row.updated_at)),
+            None => Ok((0, 0)),
         }
     }
     pub async fn add_message_broadcast_times(
@@ -2060,8 +2058,8 @@ impl<'a> StorageProcessor<'a> {
             timestamp,
             timestamp
         )
-        .execute(self.conn())
-        .await?;
+            .execute(self.conn())
+            .await?;
         Ok(())
     }
 
