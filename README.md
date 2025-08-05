@@ -21,8 +21,9 @@ There are three main roles in this protocol, Committee, Operator, Challenger and
 
 ## BitVM2 protocol
 
-### Peg-in
+### BridgeIn
 
+**PegIn**
 <!-- https://mermaid.js.org/syntax/stateDiagram.html#state-diagrams -->
 
 ```mermaid
@@ -43,13 +44,40 @@ sequenceDiagram
     F->>A: Presign Take1/Take2/Disprove/Assert tx
     R->>U: Update Peg-in instance & store graph & notify user to broadcast Peg-in tx  through front end
     U->>B: Sign & broadcast  Peg-in tx
-    R->>B: Monitor Peg-in tx Transaction confirmation
+    B->>R: Monitor Peg-in tx Transaction confirmation
     R->>L2: Submit Peg-in tx_id & graph info & mint pegBTC
 ```
 
-**Message Type**
+**Status**
+The status of BridgeIn transitions from start to finish are listed below.
+| Status | Description |
+|--------------------|-------------------------------|
+| Submitted | User submits BridgeIn request |
+| OperatorPresigned | Operators finish presigning |
+| CommitteePresigned | Committees finish presigning |
+| L2Minted | Mint asset on Goat Chain |
 
-### Kick-Off
+```mermaid
+---
+title: BridgeIn Status
+---
+flowchart LR
+    Submitted -- "Pegin tx input uxtos been spent" --> Discarded
+    Submitted --> presiging
+    subgraph presiging
+        OperatorPresigned --> CommitteePresigned
+    end
+    presiging -- "timeout" --> PresignedFailed
+    presiging --> user-submit
+    subgraph user-submit
+        PeginSent --> L2Minted
+    end
+    user-submit -- "any graph reach Take1/Take2" --> Reimbursed
+```
+
+### BridgeOut
+
+**Kick-Off**
 
 ```mermaid
 sequenceDiagram
@@ -61,17 +89,15 @@ sequenceDiagram
     participant L2 as Layer 2
 
     U->>L2: InitWithdraw tx (lock pegBTC & UTXO & mark graph could be used to kickoff the process)
-    R->>L2: Get graph id & instance id related to initWithdraw tx
+    L2->>R: Get graph id & instance id related to initWithdraw tx
     R->>O: Notify O to sign & broadcast Kickoff tx
     O->>B: Sign & broadcast Kickoff tx
-    R->>B: Monitor Kickoff tx confirmation
+    B->>R: Monitor Kickoff tx confirmation
     R->>L2: Submit Kickoff tx to burn locked pegBTC & update contract state
     R->>A: Broadcast Kickoff tx confirmation
 ```
 
-**Message Type**
-
-### Claim
+**Claim**
 
 ```mermaid
 sequenceDiagram
@@ -84,13 +110,11 @@ sequenceDiagram
     R->>O: After Kickoff, notify O to do Take-1 action until challenge period timeout
     O->>B: Sign & broadcast Take-1 tx
     O->>A: Broadcast Take-1 tx confirmation
-    R->>B: Monitor Take-1 tx confirmation & update graph state
+    B->>R: Monitor Take-1 tx confirmation & update graph state
     R->>L2: Submit Take-1 tx to update contract state
 ```
 
-**Message Type**
-
-### Challenge
+**Challenge**
 
 ```mermaid
 sequenceDiagram
@@ -101,31 +125,70 @@ sequenceDiagram
     participant B as Bitcoin Network
     participant L2 as Layer 2
     
-    R->>B: Monitor Kickoff tx confirmation 
+    B->>R: Monitor Kickoff tx confirmation 
     R->>A: Broadcast Kickoff tx confirmation
     C->>L2: Check initWithdraw validity
     C->>B: If invalid, broadcast Challenge tx
     C->>A: Send challenge notification
     O->>B: Generate & broadcast Assert tx with proof
-    R->>B: Monitor Assert tx confirmation
+    B->>R: Monitor Assert tx confirmation
     R->>A: Assert tx confirmation
     C->>B: Verify proof from Assert witness
     alt Proof incorrect
         C->>B: Broadcast Disprove tx
         C->>A: Broadcast Disprove tx confirmation
-        R->>L2: Monitor Disprove tx confirmation
+        L2->>B: Monitor Disprove tx confirmation
         R->>L2: Submit Disprove tx to update contract state
     else Proof correct
         Note over C: Challenge failed
         R->>O: Notify O do Take-2 action until disproving period timeout
         O->>B: broadcast Take-2
         O->>A: Broadcast Take-2 tx confirmation
-        R->>L2: Monitor Take-2 tx confirmation
+        L2->>R: Monitor Take-2 tx confirmation
         R->>L2: Submit Take-2 to update contract state
     end
 ```
 
-**Message Type**
+**Status**
+The status of BridgeOut transitions from start to finish are listed below.
+| Status     | Description                                                                                                                                         |
+|------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| Created    | BitVM2 Graph created                                                                                                                                |
+| Presigned  | BitVM2 Graph presigned                                                                                                                              |
+| L2Recorded | BitVM2 Graph record on Goat chain                                                                                                                   |
+| Kickoff    | Operator broadcasts Kickoff Transaction to initiate the process.                                                                                    |
+| Take1      | Happy Path: No challenge occurs. Operator obtains the assert. Relayer records it on Goat Chain                                                      |
+| Challenge  | Challenger broadcasts Challenge Transaction to contest the step.                                                                                    |
+| Assert     | Operator broadcasts Assert Transaction in response to the challenge.                                                                                |
+| Disproved  | Challenger successfully broadcasts Disprove Transaction. Relayer records it on Goat Chain.                                                          |
+| Take2      | UnHappy Path: Challenger does not broadcast Disprove Transaction. Operator obtains the assert on the unhappy path. Relayer records it on Goat Chain |
+
+```mermaid
+---
+title BridgeOut status
+---
+flowchart
+LR
+	subgraph bridge-in
+	  Created --> Presigned
+	  Presigned -- pushOperatorData-L2 --> L2Recorded
+  end
+  bridge-in --> bridge-out
+  subgraph bridge-out
+	  OperatorDataPushed -- <i><b>Happy path</b></i><br>1.<b>operator</b>:initWithdraw(L2).<br>2.<b>operator</b>:send Kickoff Transaction(L1).<br>3.<b>relayer</b>:proceedWithdraw(L2) --> Kickoff
+	  OperatorDataPushed --<i><b>Unhappy path</i></b><br>1.<b>operator</b>:send Kickoff Transaction(L1).<br>2.<b>relayer</b>:proceedWithdraw(L2) --> Kickoff
+	  Kickoff--<i><b>Happy path</b></i><br>1.take1 time lock
+expires, <b>operator</b>:send Take1 Transaction(L1).<br>2.<b>relayer</b>:finishWithdrawHappyPath(L2) --> Take1
+	  Kickoff--<i><b>Unhappy way</b></i><br><b>challenger</b>send Chanllege Transaction(L1) --> Challenge
+		Challenge--<i><b>publish proof</b></i><br><b>operator</b>: send Assert Txn(L1), contain proof-->Assert
+		Challenge--<i><b>publish fraud proof</b></i><br><b>operator</b>: send Assert Txn(L1), contain fraud proof-->Assert
+		Assert--<i><b>for fraud proof</b></i><br>1.<b>challenger</b> send Disprove Transaction(L1).<br>2.<b>relayer</b>:finishWithdrawDisprove(L2)-->Disproved
+		Assert--<i><b>for valid proof</b></i><br>1.take2 time lock
+expires, <b>operator</b> send Take2 Transaction(L1).<br>2.<b>relayer</b>:finishWithdrawUnhappyPath(L2)-->Take2
+  end
+  bridge-in -- instance reimbursed by other graph --> Obsoleted
+  bridge-in -- instance Pegin tx input uxtos been spent --> Discarded
+```
 
 ## Node
 

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT graph.graph_id AS \"graph_id:Uuid\",\n                        graph.instance_id AS \"instance_id:Uuid\",\n                        graph.status,\n                        graph.kickoff_txid,\n                        graph.take1_txid,\n                        graph.take2_txid,\n                        graph.assert_init_txid,\n                        graph.assert_commit_txids,\n                        graph.assert_final_txid,\n                        graph.challenge_txid,\n                        IFNULL(message_broadcast.msg_times, 0) AS msg_times,\n                        IFNULL(message_broadcast.msg_type, '') AS msg_type\n                 FROM graph\n                          LEFT JOIN message_broadcast ON graph.graph_id = message_broadcast.graph_id AND\n                                                         graph.instance_id = message_broadcast.instance_id AND\n                                                         message_broadcast.msg_type = ?\n                 WHERE graph.status = ?",
+  "query": "SELECT graph.graph_id AS \"graph_id:Uuid\",\n                        graph.instance_id AS \"instance_id:Uuid\",\n                        graph.status,\n                        graph.kickoff_txid,\n                        graph.take1_txid,\n                        graph.take2_txid,\n                        graph.assert_init_txid,\n                        graph.assert_commit_txids,\n                        graph.assert_final_txid,\n                        graph.challenge_txid,\n                        IFNULL(message_broadcast.msg_times, 0) AS msg_times,\n                        IFNULL(message_broadcast.msg_type, '') AS msg_type,\n                        IFNULL(message_broadcast.updated_at, 0) AS last_msg_send_at\n                 FROM graph\n                          LEFT JOIN message_broadcast ON graph.graph_id = message_broadcast.graph_id AND\n                                                         graph.instance_id = message_broadcast.instance_id AND\n                                                         message_broadcast.msg_type = ?\n                 WHERE graph.status = ?",
   "describe": {
     "columns": [
       {
@@ -62,6 +62,11 @@
         "name": "msg_type",
         "ordinal": 11,
         "type_info": "Text"
+      },
+      {
+        "name": "last_msg_send_at",
+        "ordinal": 12,
+        "type_info": "Integer"
       }
     ],
     "parameters": {
@@ -79,8 +84,9 @@
       true,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "637cb8805f1e6e73002a486711c683a4ead6209ba0453a7ac3f2cb1b5b895b06"
+  "hash": "46c49befc6d3ceb6c9bcd17e7cecbf5b04ffb8f4eed8e441ea77eac98388fee3"
 }
