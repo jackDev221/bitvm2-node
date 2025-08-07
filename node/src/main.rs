@@ -23,7 +23,6 @@ use anyhow::Result;
 use bitvm2_noded::middleware::swarm::{Bitvm2Swarm, Bitvm2SwarmConfig};
 use bitvm2_noded::p2p_msg_handler::BitvmSwarmMessageHandler;
 use futures::future;
-use tokio::task::JoinHandle;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -118,19 +117,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
     let mut metric_registry = Registry::default();
     let mut task_futures = vec![];
-    let config = Bitvm2SwarmConfig::with_params(
-        env::get_peer_key(),
-        opt.p2p_port,
-        opt.bootnodes,
-        vec![
-            Actor::Committee.to_string(),
-            Actor::Challenger.to_string(),
-            Actor::Operator.to_string(),
-            Actor::Relayer.to_string(),
-            Actor::All.to_string(),
-        ],
-    );
-    let swarm = Bitvm2Swarm::new(config, &mut metric_registry)?;
+    // init bitvm2swarm
+    let swarm = Bitvm2Swarm::new(
+        Bitvm2SwarmConfig {
+            local_key: env::get_peer_key(),
+            p2p_port: opt.p2p_port,
+            bootnodes: opt.bootnodes,
+            topic_names: vec![
+                Actor::Committee.to_string(),
+                Actor::Challenger.to_string(),
+                Actor::Operator.to_string(),
+                Actor::Relayer.to_string(),
+                Actor::All.to_string(),
+            ],
+            heartbeat_interval: env::HEARTBEAT_INTERVAL_SECOND,
+            regular_task_interval: env::REGULAR_TASK_INTERVAL_SECOND,
+        },
+        &mut metric_registry,
+    )?;
     let peer_id_string = swarm.get_peer_id_string();
     let local_db = bitvm2_noded::client::create_local_db(&opt.db_path).await;
     let handler = BitvmSwarmMessageHandler {
@@ -156,7 +160,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     check_node_info().await;
     save_local_info(&local_db).await;
     task_futures.push(tokio::spawn(async move {
-        match rpc_service::serve(
+        rpc_service::serve(
             opt_rpc_addr,
             local_db_clone1,
             actor_clone1,
@@ -164,23 +168,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
             metric_registry_clone,
         )
         .await
-        {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::error!("RPC service error: {}", e);
-                "error".to_string()
-            }
-        }
+        .unwrap_or_else(|e| {
+            tracing::error!("RPC service error: {}", e);
+            "error".to_string()
+        })
     }));
     if actor == Actor::Relayer || actor == Actor::Operator {
         task_futures.push(tokio::spawn(async move {
-            match run_watch_event_task(actor_clone2, local_db_clone2, 5).await {
-                Ok(result) => result,
-                Err(e) => {
-                    tracing::error!("Watch event task error: {}", e);
-                    "error".to_string()
-                }
-            }
+            run_watch_event_task(actor_clone2, local_db_clone2, 5).await.unwrap_or_else(|e| {
+                tracing::error!("Watch event task error: {}", e);
+                "error".to_string()
+            })
         }));
     }
 
@@ -192,13 +190,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .await;
 
-        match result {
-            Ok(swarm_result) => swarm_result,
-            Err(e) => {
-                tracing::error!("Swarm task spawn error: {}", e);
-                "swarm_spawn_error".to_string()
-            }
-        }
+        result.unwrap_or_else(|e| {
+            tracing::error!("Swarm task spawn error: {}", e);
+            "swarm_spawn_error".to_string()
+        })
     }));
 
     match future::select_all(task_futures).await {
@@ -221,26 +216,8 @@ pub async fn start_handle_swarm_msg_task(
     mut swarm: Bitvm2Swarm,
     handler: BitvmSwarmMessageHandler,
 ) -> String {
-    match swarm.run(actor, handler).await {
-        Ok(result) => result,
-        Err(e) => {
-            tracing::error!("Swarm run error: {}", e);
-            "swarm_error".to_string()
-        }
-    }
-}
-
-pub async fn wait_for_tasks(task_futures: Vec<JoinHandle<String>>) {
-    match future::select_all(task_futures).await {
-        (Ok(tag), _, _) => {
-            panic!("task:{tag} finished its run, while it wasn't expected to do it");
-        }
-        (Err(error), _, _) => {
-            tracing::warn!("One of the tokio actors unexpectedly finished, shutting down");
-            if error.is_panic() {
-                // Resume the panic on the main task
-                std::panic::resume_unwind(error.into_panic());
-            }
-        }
-    }
+    swarm.run(actor, handler).await.unwrap_or_else(|e| {
+        tracing::error!("Swarm run error: {}", e);
+        "swarm_error".to_string()
+    })
 }

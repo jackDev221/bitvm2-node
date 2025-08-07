@@ -19,11 +19,19 @@ use tokio::time::interval;
 use tracing::info;
 use zeroize::Zeroizing;
 
+#[derive(Clone, Debug)]
 pub enum TickMessageType {
     HeartBeat,
     RegularlyAction,
 }
 
+impl std::fmt::Display for TickMessageType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+#[allow(async_fn_in_trait)]
 pub trait MessageHandler {
     async fn recv_and_dispatch(
         &self,
@@ -32,7 +40,7 @@ pub trait MessageHandler {
         from_peer_id: PeerId,
         id: MessageId,
         message: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    ) -> anyhow::Result<()>;
 
     async fn handle_tick_message(
         &self,
@@ -40,33 +48,24 @@ pub trait MessageHandler {
         peer_id: PeerId,
         actor: Actor,
         msg_type: TickMessageType,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    ) -> anyhow::Result<()>;
 
     async fn finish_subscribe_topic(
         &self,
         swarm: &mut Swarm<AllBehaviours>,
         actor: Actor,
         topic: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    ) -> anyhow::Result<()>;
 }
 
 #[derive(Clone, Debug)]
 pub struct Bitvm2SwarmConfig {
-    local_key: String,
-    p2p_port: u16,
-    bootnodes: Vec<String>,
-    topic_names: Vec<String>,
-}
-
-impl Bitvm2SwarmConfig {
-    pub fn with_params(
-        local_key: String,
-        p2p_port: u16,
-        bootnodes: Vec<String>,
-        topic_names: Vec<String>,
-    ) -> Self {
-        Self { local_key, p2p_port, bootnodes, topic_names }
-    }
+    pub local_key: String,
+    pub p2p_port: u16,
+    pub bootnodes: Vec<String>,
+    pub topic_names: Vec<String>,
+    pub heartbeat_interval: u64,
+    pub regular_task_interval: u64,
 }
 
 pub struct Bitvm2Swarm {
@@ -141,13 +140,13 @@ impl Bitvm2Swarm {
             }
         };
         info!("multi_addr: {}/p2p/{}", address.to_string(), self.peer_id.to_string());
-        let mut heart_beat_interval = interval(Duration::from_secs(300));
-        let mut interval = interval(Duration::from_secs(20));
+        let mut heart_beat_interval = interval(Duration::from_secs(self.config.heartbeat_interval));
+        let mut interval = interval(Duration::from_secs(self.config.regular_task_interval));
         loop {
             select! {
 
                     _ticker = interval.tick() => {
-                        match msg_handler.handle_tick_message(&mut self.swarm, self.peer_id.clone(),actor.clone(), TickMessageType::RegularlyAction).await {
+                        match msg_handler.handle_tick_message(&mut self.swarm, self.peer_id, actor.clone(), TickMessageType::RegularlyAction).await {
                                 Ok(_) => {}
                                 Err(e) => { tracing::error!("{e:?}") }
                             }
@@ -155,7 +154,7 @@ impl Bitvm2Swarm {
                     },
 
                     _ticker = heart_beat_interval.tick() =>{
-                       match msg_handler.handle_tick_message(&mut self.swarm, self.peer_id.clone(),actor.clone(), TickMessageType::HeartBeat).await {
+                       match msg_handler.handle_tick_message(&mut self.swarm, self.peer_id, actor.clone(), TickMessageType::HeartBeat).await {
                                 Ok(_) => {}
                                 Err(e) => { tracing::error!("{e:?}") }
                             }
