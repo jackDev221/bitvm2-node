@@ -23,6 +23,8 @@ use anyhow::Result;
 use bitvm2_noded::middleware::swarm::{Bitvm2Swarm, Bitvm2SwarmConfig};
 use bitvm2_noded::p2p_msg_handler::BitvmSwarmMessageHandler;
 use futures::future;
+use tokio::signal;
+use tokio::task::JoinHandle;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -116,7 +118,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
     let mut metric_registry = Registry::default();
-    let mut task_futures = vec![];
+    let mut task_handles: Vec<JoinHandle<String>> = vec![];
     // init bitvm2swarm
     let swarm = Bitvm2Swarm::new(
         Bitvm2SwarmConfig {
@@ -159,7 +161,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // validate node info
     check_node_info().await;
     save_local_info(&local_db).await;
-    task_futures.push(tokio::spawn(async move {
+    task_handles.push(tokio::spawn(async move {
         rpc_service::serve(
             opt_rpc_addr,
             local_db_clone1,
@@ -174,7 +176,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
     }));
     if actor == Actor::Relayer || actor == Actor::Operator {
-        task_futures.push(tokio::spawn(async move {
+        task_handles.push(tokio::spawn(async move {
             run_watch_event_task(actor_clone2, local_db_clone2, 5).await.unwrap_or_else(|e| {
                 tracing::error!("Watch event task error: {}", e);
                 "error".to_string()
@@ -183,7 +185,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let swarm_actor = actor.clone();
-    task_futures.push(tokio::spawn(async move {
+    task_handles.push(tokio::spawn(async move {
         let result = tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Handle::current();
             rt.block_on(async { start_handle_swarm_msg_task(swarm_actor, swarm, handler).await })
@@ -196,19 +198,92 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
     }));
 
-    match future::select_all(task_futures).await {
-        (Ok(tag), _, _) => {
-            panic!("task:{tag:?} finished its run, while it wasn't expected to do it");
-        }
-        (Err(error), _, _) => {
-            tracing::warn!("One of the tokio actors unexpectedly finished, shutting down");
-            if error.is_panic() {
-                std::panic::resume_unwind(error.into_panic());
+    loop {
+        tokio::select! {
+            result = future::select_all(&mut task_handles), if !task_handles.is_empty() => {
+                match result {
+                    (Ok(tag), index, _) => {
+                        tracing::warn!("Task {} finished unexpectedly, shutting down all tasks", tag);
+                        task_handles.remove(index);
+                        shutdown_tasks(task_handles).await;
+                        break;
+                    }
+                    (Err(error), index, _) => {
+                        tracing::warn!("A task finished unexpectedly: {}, shutting down all tasks", error);
+                        // Remove the completed task
+                        task_handles.remove(index);
+                        if error.is_panic() {
+                            shutdown_tasks(task_handles).await;
+                            std::panic::resume_unwind(error.into_panic());
+                        } else {
+                            shutdown_tasks(task_handles).await;
+                        }
+                        break;
+                    }
+                }
+            }
+            _ = shutdown_signal() => {
+                shutdown_tasks(task_handles).await;
+                break;
             }
         }
     }
 
     Ok(())
+}
+
+/// Listen for shutdown signals (Ctrl+C, SIGTERM, etc.)
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            tracing::info!("Received Ctrl+C signal, starting graceful shutdown...");
+        },
+        _ = terminate => {
+            tracing::info!("Received SIGTERM signal, starting graceful shutdown...");
+        },
+    }
+}
+
+/// Gracefully shut down all tasks
+async fn shutdown_tasks(task_handles: Vec<JoinHandle<String>>) {
+    tracing::info!("Shutting down all tasks...");
+
+    // Send abort signal to all tasks
+    for handle in task_handles.iter() {
+        handle.abort();
+    }
+
+    // Wait for all tasks to complete or be aborted
+    for (index, handle) in task_handles.into_iter().enumerate() {
+        match handle.await {
+            Ok(tag) => {
+                tracing::info!("Task {} (tag: {}) finished normally", index, tag);
+            }
+            Err(e) if e.is_cancelled() => {
+                tracing::info!("Task {} was aborted", index);
+            }
+            Err(e) => {
+                tracing::warn!("Task {} finished with error: {}", index, e);
+            }
+        }
+    }
+
+    tracing::info!("All tasks have been stopped");
 }
 
 pub async fn start_handle_swarm_msg_task(
