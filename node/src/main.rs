@@ -25,6 +25,7 @@ use bitvm2_noded::p2p_msg_handler::BitvmSwarmMessageHandler;
 use futures::future;
 use tokio::signal;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -118,7 +119,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).try_init();
     let mut metric_registry = Registry::default();
-    let mut task_handles: Vec<JoinHandle<String>> = vec![];
+
+    // Create cancellation token for graceful shutdown
+    let cancellation_token = CancellationToken::new();
+    let mut task_handles: Vec<JoinHandle<Result<String, String>>> = vec![];
     // init bitvm2swarm
     let swarm = Bitvm2Swarm::new(
         Bitvm2SwarmConfig {
@@ -161,71 +165,106 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // validate node info
     check_node_info().await;
     save_local_info(&local_db).await;
+
+    // Spawn RPC service task with cancellation support
+    let cancel_token_clone = cancellation_token.clone();
     task_handles.push(tokio::spawn(async move {
-        rpc_service::serve(
+        match rpc_service::serve(
             opt_rpc_addr,
             local_db_clone1,
             actor_clone1,
             peer_id_string_clone,
             metric_registry_clone,
+            cancel_token_clone,
         )
         .await
-        .unwrap_or_else(|e| {
-            tracing::error!("RPC service error: {}", e);
-            "error".to_string()
-        })
+        {
+            Ok(tag) => Ok(tag),
+            Err(e) => {
+                tracing::error!("RPC service error: {}", e);
+                Err("rpc_error".to_string())
+            }
+        }
     }));
     if actor == Actor::Relayer || actor == Actor::Operator {
+        let cancel_token_clone = cancellation_token.clone();
         task_handles.push(tokio::spawn(async move {
-            run_watch_event_task(actor_clone2, local_db_clone2, 5).await.unwrap_or_else(|e| {
-                tracing::error!("Watch event task error: {}", e);
-                "error".to_string()
-            })
+            match run_watch_event_task(actor_clone2, local_db_clone2, 5, cancel_token_clone).await {
+                Ok(tag) => Ok(tag),
+                Err(e) => {
+                    tracing::error!("Watch event task error: {}", e);
+                    Err("watch_error".to_string())
+                }
+            }
         }));
     }
 
     let swarm_actor = actor.clone();
+    let cancel_token_clone = cancellation_token.clone();
     task_handles.push(tokio::spawn(async move {
         let result = tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Handle::current();
-            rt.block_on(async { start_handle_swarm_msg_task(swarm_actor, swarm, handler).await })
+            rt.block_on(async {
+                start_handle_swarm_msg_task(swarm_actor, swarm, handler, cancel_token_clone).await
+            })
         })
         .await;
-
-        result.unwrap_or_else(|e| {
-            tracing::error!("Swarm task spawn error: {}", e);
-            "swarm_spawn_error".to_string()
-        })
+        match result {
+            Ok(tag) => Ok(tag),
+            Err(e) => {
+                tracing::error!("Swarm task spawn error: {}", e);
+                Err("swarm_spawn_error".to_string())
+            }
+        }
     }));
 
-    loop {
-        tokio::select! {
-            result = future::select_all(&mut task_handles), if !task_handles.is_empty() => {
-                match result {
-                    (Ok(tag), index, _) => {
-                        tracing::warn!("Task {} finished unexpectedly, shutting down all tasks", tag);
-                        task_handles.remove(index);
-                        shutdown_tasks(task_handles).await;
-                        break;
-                    }
-                    (Err(error), index, _) => {
-                        tracing::warn!("A task finished unexpectedly: {}, shutting down all tasks", error);
-                        // Remove the completed task
-                        task_handles.remove(index);
-                        if error.is_panic() {
-                            shutdown_tasks(task_handles).await;
-                            std::panic::resume_unwind(error.into_panic());
-                        } else {
-                            shutdown_tasks(task_handles).await;
-                        }
-                        break;
-                    }
+    // Wait for shutdown signal or any task completion
+    let task_count = task_handles.len();
+
+    tokio::select! {
+        (result, index, remaining_handles) = future::select_all(task_handles) => {
+            // Log the specific failure
+            let failure_reason = match &result {
+                Ok(Ok(tag)) => {
+                    tracing::warn!("Task {} completed unexpectedly: {}", index, tag);
+                    "unexpected completion"
                 }
+                Ok(Err(error)) => {
+                    tracing::error!("Task {} failed with business error: {}", index, error);
+                    "business error"
+                }
+                Err(join_error) => {
+                    tracing::error!("Task {} failed with join error: {}", index, join_error);
+                    "join error"
+                }
+            };
+
+            tracing::info!("Triggering shutdown due to {} in task {}/{}", failure_reason, index + 1, task_count);
+
+            // Initiate graceful shutdown
+            cancellation_token.cancel();
+
+            // Wait a moment for graceful shutdown, then force abort remaining tasks
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+            // Force abort any tasks that didn't respond to cancellation
+            remaining_handles.into_iter().for_each(|handle| handle.abort());
+
+            tracing::info!("All tasks stopped");
+
+            // Handle panic propagation
+            if let Err(join_error) = result && join_error.is_panic() {
+                    std::panic::resume_unwind(join_error.into_panic());
+
             }
-            _ = shutdown_signal() => {
-                shutdown_tasks(task_handles).await;
-                break;
-            }
+        }
+        _ = shutdown_signal() => {
+            tracing::info!("Received shutdown signal, initiating graceful shutdown...");
+            cancellation_token.cancel();
+
+            // Give tasks some time to shutdown gracefully
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            tracing::info!("Graceful shutdown completed");
         }
     }
 
@@ -259,39 +298,13 @@ async fn shutdown_signal() {
     }
 }
 
-/// Gracefully shut down all tasks
-async fn shutdown_tasks(task_handles: Vec<JoinHandle<String>>) {
-    tracing::info!("Shutting down all tasks...");
-
-    // Send abort signal to all tasks
-    for handle in task_handles.iter() {
-        handle.abort();
-    }
-
-    // Wait for all tasks to complete or be aborted
-    for (index, handle) in task_handles.into_iter().enumerate() {
-        match handle.await {
-            Ok(tag) => {
-                tracing::info!("Task {} (tag: {}) finished normally", index, tag);
-            }
-            Err(e) if e.is_cancelled() => {
-                tracing::info!("Task {} was aborted", index);
-            }
-            Err(e) => {
-                tracing::warn!("Task {} finished with error: {}", index, e);
-            }
-        }
-    }
-
-    tracing::info!("All tasks have been stopped");
-}
-
 pub async fn start_handle_swarm_msg_task(
     actor: Actor,
     mut swarm: Bitvm2Swarm,
     handler: BitvmSwarmMessageHandler,
+    cancellation_token: CancellationToken,
 ) -> String {
-    swarm.run(actor, handler).await.unwrap_or_else(|e| {
+    swarm.run(actor, handler, cancellation_token).await.unwrap_or_else(|e| {
         tracing::error!("Swarm run error: {}", e);
         "swarm_error".to_string()
     })

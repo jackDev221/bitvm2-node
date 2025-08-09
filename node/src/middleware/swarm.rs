@@ -16,6 +16,7 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 use tokio::select;
 use tokio::time::interval;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use zeroize::Zeroizing;
 
@@ -107,6 +108,7 @@ impl Bitvm2Swarm {
         &mut self,
         actor: Actor,
         msg_handler: H,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<String> {
         info!("subscribing to topics: {:?}", self.config.topic_names);
         let _topics = self
@@ -144,6 +146,10 @@ impl Bitvm2Swarm {
         let mut interval = interval(Duration::from_secs(self.config.regular_task_interval));
         loop {
             select! {
+                    _ = cancellation_token.cancelled() => {
+                        tracing::info!("Swarm received shutdown signal");
+                        return Ok("swarm_shutdown".to_string());
+                    }
 
                     _ticker = interval.tick() => {
                         match msg_handler.handle_tick_message(&mut self.swarm, self.peer_id, actor.clone(), TickMessageType::RegularlyAction).await {

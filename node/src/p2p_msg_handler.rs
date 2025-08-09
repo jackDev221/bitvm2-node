@@ -121,6 +121,7 @@ mod tests {
     use libp2p::{PeerId, Swarm};
     use prometheus_client::registry::Registry;
     use store::localdb::LocalDB;
+    use tokio_util::sync::CancellationToken;
     use tracing::log::info;
     use tracing::warn;
 
@@ -223,18 +224,14 @@ mod tests {
         let tmp_db = tempfile::NamedTempFile::new().unwrap();
         tmp_db.path().as_os_str().to_str().unwrap().to_string()
     }
-
-    fn available_addr() -> String {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().to_string()
-    }
     #[tokio::test(flavor = "multi_thread")]
     async fn test_p2p_head_beat() {
         init();
-        tracing::info!("===> {}", available_addr());
         let local_db = crate::client::create_local_db(&temp_file()).await;
         let local_db_clone = local_db.clone();
-        let handle = tokio::spawn(async {
+        let cancellation_token = CancellationToken::new();
+        let cancel_token_clone = cancellation_token.clone();
+        let _handle = tokio::spawn(async {
             let mut metric_registry = Registry::default();
             let mut swarm =
                 Bitvm2Swarm::new(Bitvm2SwarmConfig{
@@ -252,12 +249,13 @@ mod tests {
                     regular_task_interval: 2,
                 }, &mut metric_registry).expect("create bitvm2 swarm");
             swarm
-                .run(Actor::Relayer, MockBitvmSwarmMessageHandler { local_db })
+                .run(Actor::Relayer, MockBitvmSwarmMessageHandler { local_db }, cancel_token_clone)
                 .await
                 .expect("Failed to run bitvm swarm");
         });
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        let handle1 = tokio::spawn(async {
+        let cancel_token_clone = cancellation_token.clone();
+        let _handle1 = tokio::spawn(async {
             let mut metric_registry = Registry::default();
             let mut swarm =
                 Bitvm2Swarm::new(Bitvm2SwarmConfig{
@@ -276,7 +274,7 @@ mod tests {
                 }, &mut metric_registry).expect("create bitvm2 swarm");
             let local_db = crate::client::create_local_db(&temp_file()).await;
             swarm
-                .run(Actor::Operator, MockBitvmSwarmMessageHandler { local_db })
+                .run(Actor::Operator, MockBitvmSwarmMessageHandler { local_db }, cancel_token_clone)
                 .await
                 .expect("Failed to run bitvm swarm");
         });
@@ -301,8 +299,8 @@ mod tests {
             }
             index += 1;
         }
-        handle.abort(); // Ensure the task is cleaned up
-        handle1.abort(); // Ensure the task is cleaned up
+        cancellation_token.cancel();
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         assert!(success);
     }
 }
