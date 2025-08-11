@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LocalDB {
     pub path: String,
     pub is_mem: bool,

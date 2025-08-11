@@ -17,8 +17,44 @@ use std::time::Duration;
 use tokio::select;
 use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{debug, info};
 use zeroize::Zeroizing;
+
+pub struct BitvmSwarmWrapper(pub Swarm<AllBehaviours>);
+
+impl std::fmt::Debug for BitvmSwarmWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BitvmSwarm").field("inner", &"<Swarm<AllBehaviours>>").finish()
+    }
+}
+
+impl BitvmSwarmWrapper {
+    pub fn new(swarm: Swarm<AllBehaviours>) -> Self {
+        Self(swarm)
+    }
+
+    pub fn inner(&self) -> &Swarm<AllBehaviours> {
+        &self.0
+    }
+
+    pub fn inner_mut(&mut self) -> &mut Swarm<AllBehaviours> {
+        &mut self.0
+    }
+}
+
+impl std::ops::Deref for BitvmSwarmWrapper {
+    type Target = Swarm<AllBehaviours>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for BitvmSwarmWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum TickMessageType {
@@ -33,10 +69,10 @@ impl std::fmt::Display for TickMessageType {
 }
 
 #[allow(async_fn_in_trait)]
-pub trait MessageHandler {
+pub trait P2pMessageHandler {
     async fn recv_and_dispatch(
         &self,
-        swarm: &mut Swarm<AllBehaviours>,
+        swarm: &mut BitvmSwarmWrapper,
         actor: Actor,
         from_peer_id: PeerId,
         id: MessageId,
@@ -45,7 +81,7 @@ pub trait MessageHandler {
 
     async fn handle_tick_message(
         &self,
-        swarm: &mut Swarm<AllBehaviours>,
+        swarm: &mut BitvmSwarmWrapper,
         peer_id: PeerId,
         actor: Actor,
         msg_type: TickMessageType,
@@ -53,7 +89,7 @@ pub trait MessageHandler {
 
     async fn finish_subscribe_topic(
         &self,
-        swarm: &mut Swarm<AllBehaviours>,
+        swarm: &mut BitvmSwarmWrapper,
         actor: Actor,
         topic: &str,
     ) -> anyhow::Result<()>;
@@ -69,16 +105,16 @@ pub struct Bitvm2SwarmConfig {
     pub regular_task_interval: u64,
 }
 
-pub struct Bitvm2Swarm {
+pub struct BitvmNetworkManager {
     config: Bitvm2SwarmConfig,
     peer_id: PeerId,
-    swarm: Swarm<AllBehaviours>,
+    swarm: BitvmSwarmWrapper,
 }
-impl Bitvm2Swarm {
+impl BitvmNetworkManager {
     pub fn new(
         config: Bitvm2SwarmConfig,
         metric_registry: &mut Registry,
-    ) -> anyhow::Result<Bitvm2Swarm> {
+    ) -> anyhow::Result<BitvmNetworkManager> {
         let key_pair = libp2p::identity::Keypair::from_protobuf_encoding(&Zeroizing::new(
             base64::engine::general_purpose::STANDARD.decode(config.local_key.clone())?,
         ))?;
@@ -93,18 +129,22 @@ impl Bitvm2Swarm {
             })
             .build();
 
-        tracing::debug!("bootnodes: {:?}", config.bootnodes);
+        debug!("bootnodes: {:?}", config.bootnodes);
         for peer in &config.bootnodes {
             let (peer_id, multi_addr) = parse_boot_node_str(peer)?;
             swarm.behaviour_mut().kademlia.add_address(&peer_id, multi_addr);
         }
-        Ok(Bitvm2Swarm { config, swarm, peer_id: key_pair.public().to_peer_id() })
+        Ok(BitvmNetworkManager {
+            config,
+            swarm: BitvmSwarmWrapper::new(swarm),
+            peer_id: key_pair.public().to_peer_id(),
+        })
     }
 
     pub fn get_peer_id_string(&self) -> String {
         self.peer_id.to_string()
     }
-    pub async fn run<H: MessageHandler>(
+    pub async fn run<H: P2pMessageHandler>(
         &mut self,
         actor: Actor,
         msg_handler: H,
@@ -132,9 +172,7 @@ impl Bitvm2Swarm {
         let address = loop {
             if let SwarmEvent::NewListenAddr { address, .. } = self.swarm.select_next_some().await {
                 if address.iter().any(|e| e == Protocol::Ip4(Ipv4Addr::LOCALHOST)) {
-                    tracing::debug!(
-                        "Ignoring localhost address to make sure the example works in Firefox"
-                    );
+                    debug!("Ignoring localhost address to make sure the example works in Firefox");
                     continue;
                 }
                 info!(%address, "Listening");
@@ -147,7 +185,7 @@ impl Bitvm2Swarm {
         loop {
             select! {
                     _ = cancellation_token.cancelled() => {
-                        tracing::info!("Swarm received shutdown signal");
+                        info!("Swarm received shutdown signal");
                         return Ok("swarm_shutdown".to_string());
                     }
 
@@ -180,13 +218,13 @@ impl Bitvm2Swarm {
                             }
                         }
                         SwarmEvent::Behaviour(AllBehavioursEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic})) => {
-                            tracing::debug!("subscribing: {:?}, {:?}", peer_id, topic);
+                            debug!("subscribing: {:?}, {:?}", peer_id, topic);
                             let topic_limb = split_topic_name(topic.as_str());//topic.as_str().split_once("/topic/").expect("should be $proto/topic/$actor");
                             if topic_limb.0 != env::get_proto_base() {
                                continue;
                             }
                             let topic = topic_limb.1;
-                            tracing::debug!("subscribed: {:?}, {:?}", peer_id, topic);
+                            debug!("subscribed: {:?}, {:?}", peer_id, topic);
                             // Except for the bootNode, all other nodes need to request information from other nodes after registering the event `ALL`.
                             if self.config.bootnodes.is_empty(){
                                 match msg_handler.finish_subscribe_topic(&mut self.swarm, actor.clone(), topic).await{
@@ -195,10 +233,10 @@ impl Bitvm2Swarm {
                             }
                         }
                         SwarmEvent::Behaviour(AllBehavioursEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic})) => {
-                            tracing::debug!("unsubscribed: {:?}, {:?}", peer_id, topic);
+                            debug!("unsubscribed: {:?}, {:?}", peer_id, topic);
                         }
                         SwarmEvent::Behaviour(AllBehavioursEvent::Kademlia(kad::Event::RoutingUpdated{ peer, addresses,..})) => {
-                            tracing::debug!("routing updated: {:?}, addresses:{:?}", peer, addresses);
+                            debug!("routing updated: {:?}, addresses:{:?}", peer, addresses);
                         }
                         SwarmEvent::Behaviour(AllBehavioursEvent::Kademlia(kad::Event::OutboundQueryProgressed {
                             result: kad::QueryResult::GetClosestPeers(Ok(ok)),
@@ -207,23 +245,23 @@ impl Bitvm2Swarm {
                             // The example is considered failed as there
                             // should always be at least 1 reachable peer.
                             if ok.peers.is_empty() {
-                                tracing::debug!("Query finished with no closest peers.");
+                                debug!("Query finished with no closest peers.");
                             }
 
-                            tracing::debug!("Query finished with closest peers: {:#?}", ok.peers);
+                            debug!("Query finished with closest peers: {:#?}", ok.peers);
                             //return Ok(());
                         }
                         SwarmEvent::Behaviour(AllBehavioursEvent::Kademlia(kad::Event::InboundRequest {request})) => {
-                            tracing::debug!("kademlia: {:?}", request);
+                            debug!("kademlia: {:?}", request);
                         }
                         SwarmEvent::NewExternalAddrOfPeer {peer_id, address} => {
-                            tracing::debug!("new external address of peer: {} {}", peer_id, address);
+                            debug!("new external address of peer: {} {}", peer_id, address);
                         }
                         SwarmEvent::ConnectionEstablished {peer_id, connection_id, endpoint, .. } => {
-                            tracing::debug!("connected to {peer_id}: {connection_id}, endpoint: {:?}", endpoint);
+                            debug!("connected to {peer_id}: {connection_id}, endpoint: {:?}", endpoint);
                         }
                         e => {
-                            tracing::debug!("Unhandled {:?}", e);
+                            debug!("Unhandled {:?}", e);
                         }
                     }
                 }

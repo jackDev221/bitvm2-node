@@ -1,25 +1,24 @@
 use crate::action::{GOATMessage, GOATMessageContent, recv_and_dispatch, send_to_peer};
 use crate::client::{BTCClient, GOATClient};
 use crate::env::get_local_node_info;
-use crate::middleware::AllBehaviours;
-use crate::middleware::swarm::{MessageHandler, TickMessageType};
+use crate::middleware::swarm::{BitvmSwarmWrapper, P2pMessageHandler, TickMessageType};
 use crate::utils::detect_heart_beat;
 use bitvm2_lib::actors::Actor;
+use libp2p::PeerId;
 use libp2p::gossipsub::MessageId;
-use libp2p::{PeerId, Swarm};
 use store::ipfs::IPFS;
 use store::localdb::LocalDB;
 
-pub struct BitvmSwarmMessageHandler {
+pub struct BitvmNodeProcessor {
     pub local_db: LocalDB,
     pub btc_client: BTCClient,
     pub goat_client: GOATClient,
     pub ipfs: IPFS,
 }
-impl MessageHandler for BitvmSwarmMessageHandler {
+impl P2pMessageHandler for BitvmNodeProcessor {
     async fn recv_and_dispatch(
         &self,
-        swarm: &mut Swarm<AllBehaviours>,
+        swarm: &mut BitvmSwarmWrapper,
         actor: Actor,
         from_peer_id: PeerId,
         id: MessageId,
@@ -45,7 +44,7 @@ impl MessageHandler for BitvmSwarmMessageHandler {
 
     async fn handle_tick_message(
         &self,
-        swarm: &mut Swarm<AllBehaviours>,
+        swarm: &mut BitvmSwarmWrapper,
         peer_id: PeerId,
         actor: Actor,
         msg_type: TickMessageType,
@@ -90,7 +89,7 @@ impl MessageHandler for BitvmSwarmMessageHandler {
 
     async fn finish_subscribe_topic(
         &self,
-        swarm: &mut Swarm<AllBehaviours>,
+        swarm: &mut BitvmSwarmWrapper,
         _actor: Actor,
         topic: &str,
     ) -> anyhow::Result<()> {
@@ -111,25 +110,26 @@ impl MessageHandler for BitvmSwarmMessageHandler {
 mod tests {
     use crate::action::{GOATMessage, GOATMessageContent, NodeInfo, send_to_peer};
     use crate::env::get_rpc_support_actors;
-    use crate::middleware::AllBehaviours;
     use crate::middleware::swarm::{
-        Bitvm2Swarm, Bitvm2SwarmConfig, MessageHandler, TickMessageType,
+        Bitvm2SwarmConfig, BitvmNetworkManager, BitvmSwarmWrapper, P2pMessageHandler,
+        TickMessageType,
     };
     use crate::utils::save_node_info;
     use bitvm2_lib::actors::Actor;
+    use libp2p::PeerId;
     use libp2p::gossipsub::MessageId;
-    use libp2p::{PeerId, Swarm};
     use prometheus_client::registry::Registry;
     use store::localdb::LocalDB;
     use tokio_util::sync::CancellationToken;
-    use tracing::log::info;
+    use tracing::Level;
     use tracing::warn;
 
-    struct MockBitvmSwarmMessageHandler {
+    #[derive(Debug)]
+    struct MockBitvmNodeProcessor {
         pub local_db: LocalDB,
     }
     pub async fn detect_heart_beat(
-        swarm: &mut Swarm<AllBehaviours>,
+        swarm: &mut BitvmSwarmWrapper,
         node_info: NodeInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("start detect_heart_beat");
@@ -144,44 +144,39 @@ mod tests {
         }
         Ok(())
     }
-    impl MessageHandler for MockBitvmSwarmMessageHandler {
+    impl P2pMessageHandler for MockBitvmNodeProcessor {
+        #[tracing::instrument(level = Level::INFO)]
         async fn recv_and_dispatch(
             &self,
-            _swarm: &mut Swarm<AllBehaviours>,
+            _swarm: &mut BitvmSwarmWrapper,
             actor: Actor,
             from_peer_id: PeerId,
             id: MessageId,
             message: &[u8],
         ) -> anyhow::Result<()> {
-            tracing::info!("recv_and_dispatch");
             if id == GOATMessage::default_message_id() {
                 tracing::info!("recv_and_dispatch receive local message");
                 return Ok(());
             }
             let message: GOATMessage = serde_json::from_slice(message)?;
             let content: GOATMessageContent = message.to_typed()?;
-            info!(
-                "actor:{actor}, peer_id:{from_peer_id}, content:{}",
-                String::from_utf8_lossy(&message.content)
-            );
-
             if let (GOATMessageContent::RequestNodeInfo(node_info), _) = (content, actor) {
                 save_node_info(&self.local_db, &node_info).await.expect("save_node_info");
             }
             Ok(())
         }
 
+        #[tracing::instrument(level = Level::INFO)]
         async fn handle_tick_message(
             &self,
-            swarm: &mut Swarm<AllBehaviours>,
+            swarm: &mut BitvmSwarmWrapper,
             _peer_id: PeerId,
             actor: Actor,
             msg_type: TickMessageType,
         ) -> anyhow::Result<()> {
-            tracing::info!("handle_tick_message :{}", msg_type.to_string());
             match msg_type {
                 TickMessageType::HeartBeat => {
-                    match detect_heart_beat(
+                    detect_heart_beat(
                         swarm,
                         NodeInfo {
                             peer_id: "test".to_string(),
@@ -192,26 +187,20 @@ mod tests {
                         },
                     )
                     .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => {
-                            tracing::error!("detect_heart_beat: {e}");
-                        }
-                    }
-                    tracing::debug!("Handling heartbeat tick message");
+                    .map_err(|e| anyhow::Error::msg(e.to_string()))?;
                     Ok(())
                 }
                 TickMessageType::RegularlyAction => Ok(()),
             }
         }
 
+        #[tracing::instrument(level = Level::INFO)]
         async fn finish_subscribe_topic(
             &self,
-            _swarm: &mut Swarm<AllBehaviours>,
+            _swarm: &mut BitvmSwarmWrapper,
             actor: Actor,
             topic: &str,
         ) -> anyhow::Result<()> {
-            tracing::info!("finish_subscribe_topic: {actor}: {topic}");
             Ok(())
         }
     }
@@ -233,8 +222,8 @@ mod tests {
         let cancel_token_clone = cancellation_token.clone();
         let _handle = tokio::spawn(async {
             let mut metric_registry = Registry::default();
-            let mut swarm =
-                Bitvm2Swarm::new(Bitvm2SwarmConfig{
+            let mut bitvm_network_manager =
+                BitvmNetworkManager::new(Bitvm2SwarmConfig{
                     local_key: "CAESQA1AsvghB6dERoim0WwUHoAJ9u5UCv15O6gmMJpmjGU2aWWK4dC1lRrLt7oMrHezB7RWxuc5UdAfEhk+19lh7iA=".to_string(),
                     p2p_port: 9100,
                     bootnodes: vec![],
@@ -248,8 +237,8 @@ mod tests {
                     heartbeat_interval: 3,
                     regular_task_interval: 2,
                 }, &mut metric_registry).expect("create bitvm2 swarm");
-            swarm
-                .run(Actor::Relayer, MockBitvmSwarmMessageHandler { local_db }, cancel_token_clone)
+            bitvm_network_manager
+                .run(Actor::Relayer, MockBitvmNodeProcessor { local_db }, cancel_token_clone)
                 .await
                 .expect("Failed to run bitvm swarm");
         });
@@ -257,8 +246,8 @@ mod tests {
         let cancel_token_clone = cancellation_token.clone();
         let _handle1 = tokio::spawn(async {
             let mut metric_registry = Registry::default();
-            let mut swarm =
-                Bitvm2Swarm::new(Bitvm2SwarmConfig{
+            let mut bitvm_network_manager =
+                BitvmNetworkManager::new(Bitvm2SwarmConfig{
                     local_key: "CAESQDBb9rRpYlgy8Wy6TjTqic8hd8e5kf0uak/ILeCexgG20mVpLyL7n/v5bjpZNOZ620m/cTzonnSh1l5WP1E/ri0=".to_string(),
                     p2p_port: 9101,
                     bootnodes: vec!["/ip4/127.0.0.1/tcp/9100/p2p/12D3KooWGunnJB9XxBNBcRqE4cyq9aHGD5GjTvsvQijn81Fjnfbm".to_string()],
@@ -273,8 +262,8 @@ mod tests {
                     regular_task_interval: 3,
                 }, &mut metric_registry).expect("create bitvm2 swarm");
             let local_db = crate::client::create_local_db(&temp_file()).await;
-            swarm
-                .run(Actor::Operator, MockBitvmSwarmMessageHandler { local_db }, cancel_token_clone)
+            bitvm_network_manager
+                .run(Actor::Operator, MockBitvmNodeProcessor { local_db }, cancel_token_clone)
                 .await
                 .expect("Failed to run bitvm swarm");
         });

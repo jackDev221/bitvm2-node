@@ -12,7 +12,6 @@ pub struct AllBehaviours {
     //pub mdns: mdns::tokio::Behaviour,
     pub gossipsub: gossipsub::Behaviour,
 }
-
 impl AllBehaviours {
     pub fn new(key: &Keypair) -> Self {
         let mut cfg = kad::Config::new(get_proto_name());

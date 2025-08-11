@@ -20,8 +20,8 @@ use bitvm2_noded::utils::{
 };
 
 use anyhow::Result;
-use bitvm2_noded::middleware::swarm::{Bitvm2Swarm, Bitvm2SwarmConfig};
-use bitvm2_noded::p2p_msg_handler::BitvmSwarmMessageHandler;
+use bitvm2_noded::middleware::swarm::{Bitvm2SwarmConfig, BitvmNetworkManager};
+use bitvm2_noded::p2p_msg_handler::BitvmNodeProcessor;
 use futures::future;
 use tokio::signal;
 use tokio::task::JoinHandle;
@@ -124,7 +124,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cancellation_token = CancellationToken::new();
     let mut task_handles: Vec<JoinHandle<Result<String, String>>> = vec![];
     // init bitvm2swarm
-    let swarm = Bitvm2Swarm::new(
+    let bitvm_network_manager = BitvmNetworkManager::new(
         Bitvm2SwarmConfig {
             local_key: env::get_peer_key(),
             p2p_port: opt.p2p_port,
@@ -141,9 +141,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
         &mut metric_registry,
     )?;
-    let peer_id_string = swarm.get_peer_id_string();
+    let peer_id_string = bitvm_network_manager.get_peer_id_string();
     let local_db = bitvm2_noded::client::create_local_db(&opt.db_path).await;
-    let handler = BitvmSwarmMessageHandler {
+    let handler = BitvmNodeProcessor {
         local_db: local_db.clone(),
         btc_client: BTCClient::new(None, env::get_network()),
         goat_client: GOATClient::new(env::goat_config_from_env().await, env::get_goat_network()),
@@ -205,7 +205,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let result = tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Handle::current();
             rt.block_on(async {
-                start_handle_swarm_msg_task(swarm_actor, swarm, handler, cancel_token_clone).await
+                start_handle_swarm_msg_task(
+                    swarm_actor,
+                    bitvm_network_manager,
+                    handler,
+                    cancel_token_clone,
+                )
+                .await
             })
         })
         .await;
@@ -300,8 +306,8 @@ async fn shutdown_signal() {
 
 pub async fn start_handle_swarm_msg_task(
     actor: Actor,
-    mut swarm: Bitvm2Swarm,
-    handler: BitvmSwarmMessageHandler,
+    mut swarm: BitvmNetworkManager,
+    handler: BitvmNodeProcessor,
     cancellation_token: CancellationToken,
 ) -> String {
     swarm.run(actor, handler, cancellation_token).await.unwrap_or_else(|e| {
