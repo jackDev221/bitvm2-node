@@ -225,9 +225,8 @@ mod tests {
     use crate::rpc_service::bitvm2::UTXO;
     use crate::rpc_service::{self, Actor, routes};
     use crate::utils::{
-        generate_local_key, generate_random_bytes, get_graph, get_rand_btc_address_p2pkh,
-        get_rand_btc_address_p2wpkh, get_rand_goat_address, store_graph, temp_file,
-        update_graph_fields,
+        generate_local_key, generate_random_bytes, get_graph, get_rand_btc_address_p2wpkh,
+        get_rand_goat_address, store_graph, temp_file, update_graph_fields,
     };
     use bitcoin::Network;
     use bitvm2_lib::types::Bitvm2Graph;
@@ -835,7 +834,7 @@ mod tests {
                     )
                     .await?;
                 storage_processor
-                    .create_or_update_goat_tx_record(&GoatTxRecord {
+                    .upsert_goat_tx_record(&GoatTxRecord {
                         instance_id: Uuid::new_v4(),
                         graph_id,
                         tx_type: GoatTxType::ProceedWithdraw.to_string(),

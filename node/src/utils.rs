@@ -55,7 +55,7 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use store::ipfs::IPFS;
-use store::localdb::{LocalDB, UpdateGraphParams};
+use store::localdb::{InstanceUpdateParams, LocalDB, UpdateGraphParams};
 use store::{
     GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus,
     Instance, InstanceStatus, Message, MessageState, MessageType, Node,
@@ -717,7 +717,7 @@ pub async fn get_groth16_proof(
         Ok((proof, pis, vk))
     } else {
         storage_processor
-            .create_or_update_goat_tx_record(&GoatTxRecord {
+            .upsert_goat_tx_record(&GoatTxRecord {
                 instance_id: *instance_id,
                 graph_id: *graph_id,
                 tx_type: GoatTxType::ProceedWithdraw.to_string(),
@@ -967,7 +967,7 @@ pub async fn create_goat_tx_record(
     {
         let mut storage_process = local_db.acquire().await?;
         storage_process
-            .create_or_update_goat_tx_record(&GoatTxRecord {
+            .upsert_goat_tx_record(&GoatTxRecord {
                 instance_id,
                 graph_id,
                 tx_type: tx_type.to_string(),
@@ -996,7 +996,7 @@ pub async fn store_graph(
         .iter()
         .map(|v| serialize_hex(&v.tx().compute_txid()))
         .collect();
-    let network = transaction.get_instance_network(&instance_id).await?;
+    let network = transaction.get_network_by_instance(&instance_id).await?;
 
     let mut bridge_out_from_addr = "".to_string();
     let mut bridge_out_to_addr = "".to_string();
@@ -1014,7 +1014,7 @@ pub async fn store_graph(
     }
 
     transaction
-        .update_graph(Graph {
+        .upsert_graph(Graph {
             graph_id,
             instance_id,
             graph_ipfs_base_url: "".to_string(),
@@ -1052,16 +1052,15 @@ pub async fn store_graph(
             graph.pegin.input_amounts.iter().fold(Amount::ZERO, |acc, v| acc + *v);
         let sum_output_value = pegin_tx.output.iter().fold(Amount::ZERO, |acc, v| acc + v.value);
         transaction
-            .update_instance_fields(
-                &instance_id,
-                Some(InstanceStatus::Presigned.to_string()),
-                Some((
-                    serialize_hex(&graph.pegin.tx().compute_txid()),
-                    (sum_input_value - sum_output_value).to_sat() as i64,
-                )),
-                None,
+            .update_instance_with_params(
+                &InstanceUpdateParams::new(instance_id)
+                    .with_pegin_confirm(
+                        serialize_hex(&graph.pegin.tx().compute_txid()),
+                        (sum_input_value - sum_output_value).to_sat() as i64,
+                    )
+                    .with_status(InstanceStatus::Presigned.to_string()),
             )
-            .await?
+            .await?;
     }
 
     transaction.commit().await?;
@@ -1337,7 +1336,7 @@ pub async fn save_node_info(
     let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
     let mut storage_process = local_db.acquire().await?;
     let _ = storage_process
-        .update_node(Node {
+        .upsert_node(Node {
             peer_id: node_info.peer_id.clone(),
             actor: node_info.actor.clone(),
             goat_addr: node_info.goat_addr.clone(),

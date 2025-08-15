@@ -290,7 +290,7 @@ async fn handle_proceed_withdraw_events<'a>(
     };
     for event in proceed_withdraw_events {
         storage_processor
-            .create_or_update_goat_tx_record(&GoatTxRecord {
+            .upsert_goat_tx_record(&GoatTxRecord {
                 instance_id: Uuid::from_str(&strip_hex_prefix_owned(&event.instance_id))?,
                 graph_id: Uuid::from_str(&strip_hex_prefix_owned(&event.graph_id))?,
                 tx_type: GoatTxType::ProceedWithdraw.to_string(),
@@ -371,7 +371,7 @@ async fn handle_bridge_in_request_events<'a>(
             warn!("generate instance failed from event:{event:?}");
             continue;
         }
-        storage_processor.create_instance(instance_res.unwrap()).await?;
+        storage_processor.upsert_instance(instance_res.unwrap()).await?;
     }
     Ok(())
 }
@@ -430,11 +430,11 @@ pub async fn fetch_history_events(
             if to_height >= current_finalized {
                 info!("Finish load history at {to_height}");
                 watch_contract.status = WatchContractStatus::Synced.to_string();
-                tx.create_or_update_watch_contract(&watch_contract).await?;
+                tx.upsert_watch_contract(&watch_contract).await?;
                 tx.commit().await?;
                 break;
             }
-            tx.create_or_update_watch_contract(&watch_contract).await?;
+            tx.upsert_watch_contract(&watch_contract).await?;
             tx.commit().await?;
         }
         Ok::<(), Box<dyn std::error::Error>>(())
@@ -540,7 +540,7 @@ pub async fn monitor_events(
     info!("finish monitor event from: {}, to: {to_height}", watch_contract.from_height);
     watch_contract.from_height = to_height + 1;
     watch_contract.updated_at = current_time_secs();
-    tx.create_or_update_watch_contract(&watch_contract).await?;
+    tx.upsert_watch_contract(&watch_contract).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -602,7 +602,7 @@ pub async fn scan_l1_broadcast_txs(
     info!("Starting into scan_l1_broadcast_txs");
     let mut storage_process = local_db.acquire().await?;
     let (instances, _) = storage_process
-        .instance_list(None, Some(InstanceStatus::Presigned.to_string()), None, None, None)
+        .find_instances(None, Some(InstanceStatus::Presigned.to_string()), None, None, None)
         .await?;
 
     info!("Starting into scan_l1_broadcast_txs, need to check instance_size:{} ", instances.len());
@@ -616,11 +616,9 @@ pub async fn scan_l1_broadcast_txs(
         if tx_on_chain(btc_client, &tx_id).await? {
             info!("scan_bridge_in: {} onchain ", tx_id.to_string());
             let update_res = storage_process
-                .update_instance_fields(
+                .update_instance_status(
                     &instance.instance_id,
-                    Some(InstanceStatus::L1Broadcasted.to_string()),
-                    None,
-                    None,
+                    &InstanceStatus::L1Broadcasted.to_string(),
                 )
                 .await;
             if let Err(err) = update_res {
@@ -648,7 +646,7 @@ pub async fn scan_l1_broadcast_txs(
     if !discarded_instances.is_empty() {
         info!("update_l1_broadcast_txs: {} discarded instances", discarded_instances.len());
         let mut tx = local_db.start_transaction().await?;
-        tx.update_batch_instance_status(
+        tx.update_instances_status_batch(
             &InstanceStatus::Discarded.to_string(),
             &discarded_instances,
         )
@@ -711,7 +709,7 @@ pub async fn scan_post_pegin_data(
     info!("Starting into post_pegin_data");
     let mut storage_process = local_db.acquire().await?;
     let (instances, _) = storage_process
-        .instance_list(None, Some(InstanceStatus::L1Broadcasted.to_string()), None, None, None)
+        .find_instances(None, Some(InstanceStatus::L1Broadcasted.to_string()), None, None, None)
         .await?;
 
     info!("Starting into scan post_pegin_data, need to send instance_size:{} ", instances.len());
@@ -734,11 +732,9 @@ pub async fn scan_post_pegin_data(
                 continue;
             }
             storage_process
-                .update_instance_fields(
+                .update_instance_status(
                     &instance.instance_id,
-                    Some(InstanceStatus::L2Minted.to_string()),
-                    None,
-                    None,
+                    &InstanceStatus::L2Minted.to_string(),
                 )
                 .await?;
         } else {
@@ -776,7 +772,7 @@ pub async fn scan_post_pegin_data(
                     .await?;
 
                     storage_process
-                        .update_instance_fields(&instance.instance_id, None, None, Some(tx_hash))
+                        .update_instance_pegin_data_txid(&instance.instance_id, &tx_hash)
                         .await?;
                 }
             };
@@ -794,7 +790,7 @@ pub async fn scan_post_operator_data(
     let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
     let mut storage_process = local_db.acquire().await?;
     let (instances, _) = storage_process
-        .instance_list(
+        .find_instances(
             None,
             Some(InstanceStatus::L2Minted.to_string()),
             Some(current_time - GRAPH_OPERATOR_DATA_UPLOAD_TIME_EXPIRED),

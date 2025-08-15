@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use std::collections::HashMap;
 use std::str::FromStr;
 use strum::{Display, EnumString};
 use uuid::Uuid;
@@ -71,9 +72,7 @@ pub struct Instance {
     pub pegin_cancel_txid: Option<String>,
     pub unsign_pegin_confirm_tx: Option<String>,
     #[sqlx(json)]
-    pub committees_sigs: Vec<String>,
-    #[sqlx(json)]
-    pub committees: Vec<String>,
+    pub committees_answers: HashMap<String, String>,
     pub pegin_data_txid: String,
     pub timeout: i64,
     pub created_at: i64,
