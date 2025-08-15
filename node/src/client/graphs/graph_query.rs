@@ -17,6 +17,10 @@ pub enum GatewayEventEntity {
     WithdrawDisproveds,
     #[strum(serialize = "bridgeInRequests")]
     BridgeInRequests,
+    #[strum(serialize = "committeeResponses")]
+    CommitteeResponses,
+    #[strum(serialize = "bridgeIns")]
+    BridgeIns,
 }
 
 impl GatewayEventEntity {
@@ -83,6 +87,27 @@ impl GatewayEventEntity {
                     .add_field(&tag, "peginAmountSats")
                     .add_field(&tag, "txnFees")
                     .add_field(&tag, "userInputs")
+                    .add_field(&tag, "transactionHash")
+                    .add_field(&tag, "blockNumber")
+                    .set_order_by(&tag, "blockNumber", "asc");
+            }
+            GatewayEventEntity::CommitteeResponses => {
+                builder = builder
+                    .add_field(&tag, "id")
+                    .add_field(&tag, "instanceId")
+                    .add_field(&tag, "committeeAddress")
+                    .add_field(&tag, "pubkey")
+                    .add_field(&tag, "transactionHash")
+                    .add_field(&tag, "blockNumber")
+                    .set_order_by(&tag, "blockNumber", "asc");
+            }
+            GatewayEventEntity::BridgeIns => {
+                builder = builder
+                    .add_field(&tag, "id")
+                    .add_field(&tag, "instanceId")
+                    .add_field(&tag, "depositorAddress")
+                    .add_field(&tag, "peginAmountSats")
+                    .add_field(&tag, "feeAmountSats")
                     .add_field(&tag, "transactionHash")
                     .add_field(&tag, "blockNumber")
                     .set_order_by(&tag, "blockNumber", "asc");
@@ -209,11 +234,43 @@ pub struct BridgeInRequestEvent {
     #[serde(rename = "depositorAddress")]
     pub depositor_address: String,
     #[serde(rename = "peginAmountSats")]
-    pub pegin_amount_sates: String,
+    pub pegin_amount_sats: String,
     #[serde(rename = "txnFees")]
     pub txn_fees: [String; 3],
     #[serde(rename = "userInputs")]
     pub user_inputs: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CommitteeResponseEvent {
+    pub id: String,
+    #[serde(rename = "transactionHash")]
+    pub transaction_hash: String,
+    #[serde(rename = "blockNumber")]
+    pub block_number: String,
+    #[serde(rename = "instanceId")]
+    pub instance_id: String,
+    #[serde(rename = "committeeAddress")]
+    pub committee_address: String,
+    #[serde(rename = "pubkey")]
+    pub pubkey: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BridgeInEvent {
+    pub id: String,
+    #[serde(rename = "transactionHash")]
+    pub transaction_hash: String,
+    #[serde(rename = "blockNumber")]
+    pub block_number: String,
+    #[serde(rename = "instanceId")]
+    pub instance_id: String,
+    #[serde(rename = "depositorAddress")]
+    pub depositor_address: String,
+    #[serde(rename = "peginAmountSats")]
+    pub pegin_amount_sats: String,
+    #[serde(rename = "feeAmountSats")]
+    pub fee_amount_sats: String,
 }
 
 #[derive(Debug, Clone)]

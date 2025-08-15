@@ -24,15 +24,15 @@ impl QueryBuilder {
 
     /// Create a new UPDATE query builder
     pub fn update(table: &str) -> Self {
-        Self { sql: format!("UPDATE {}", table), params: Vec::new() }
+        Self { sql: format!("UPDATE {table}"), params: Vec::new() }
     }
 
     /// Add SET clause for UPDATE queries
     pub fn set_field(&mut self, field: &str, param: QueryParam) {
         if self.sql.contains("SET") {
-            self.sql.push_str(&format!(", {} = ?", field));
+            self.sql.push_str(&format!(", {field} = ?"));
         } else {
-            self.sql.push_str(&format!(" SET {} = ?", field));
+            self.sql.push_str(&format!(" SET {field} = ?"));
         }
         self.params.push(param);
     }
@@ -40,9 +40,9 @@ impl QueryBuilder {
     /// Add SET clause with NULL value for UPDATE queries
     pub fn set_field_null(&mut self, field: &str) {
         if self.sql.contains("SET") {
-            self.sql.push_str(&format!(", {} = NULL", field));
+            self.sql.push_str(&format!(", {field} = NULL"));
         } else {
-            self.sql.push_str(&format!(" SET {} = NULL", field));
+            self.sql.push_str(&format!(" SET {field} = NULL"));
         }
     }
 

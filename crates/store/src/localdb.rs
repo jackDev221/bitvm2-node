@@ -307,12 +307,12 @@ impl<'a> StorageProcessor<'a> {
     }
 
     /// Get network type by instance ID
-    /// 
+    ///
     /// Retrieves the network type (e.g., "mainnet", "testnet") for a specific instance.
-    /// 
+    ///
     /// Parameters:
     /// - instance_id: The UUID of the instance
-    /// 
+    ///
     /// Returns:
     /// - Ok(network_string) if the instance was found
     /// - Ok("") if no instance with the given ID exists
@@ -330,14 +330,14 @@ impl<'a> StorageProcessor<'a> {
     }
 
     /// Insert or update a graph
-    /// 
+    ///
     /// Performs an INSERT OR REPLACE operation on the graph table.
     /// If a graph with the same graph_id exists, it will be updated.
     /// If no graph exists, a new one will be created.
-    /// 
+    ///
     /// Parameters:
     /// - graph: The complete graph data to insert or update
-    /// 
+    ///
     /// Returns:
     /// - Ok(affected_rows) number of rows affected by the operation
     /// - Err if the operation failed
@@ -381,15 +381,15 @@ impl<'a> StorageProcessor<'a> {
     }
 
     /// Update expired instances status
-    /// 
+    ///
     /// Updates the status of instances that have expired based on a time threshold.
     /// This is typically used for cleanup operations to mark old instances as expired.
-    /// 
+    ///
     /// Parameters:
     /// - current_status: The current status to match for instances to be updated
     /// - expired_status: The new status to set for expired instances
     /// - time_threshold: Timestamp threshold - instances updated before this time will be marked as expired
-    /// 
+    ///
     /// Returns:
     /// - Ok(affected_rows) number of instances that were updated
     /// - Err if the update operation failed
@@ -587,7 +587,7 @@ impl<'a> StorageProcessor<'a> {
 
         // Create HashMap from the arrays
         let mut committees_answers = HashMap::new();
-        for (committee, sign) in committees.iter().zip(committee_signs.iter()) {
+        for (committee, sign) in committees.iter().zip(committee_signs) {
             committees_answers.insert(committee.clone(), sign.clone());
         }
 
@@ -816,7 +816,7 @@ impl<'a> StorageProcessor<'a> {
     ) -> anyhow::Result<(Vec<GraphFullData>, i64)> {
         let mut graph_query_str = "SELECT graph.graph_id,
                                                  graph.instance_id,
-                                                 instance.bridge_path AS bridge_path,
+                                                 0 AS bridge_path,
                                                  graph.status         AS status,
                                                  instance.network     AS network,
                                                  instance.from_addr   AS from_addr,

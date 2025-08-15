@@ -1745,7 +1745,7 @@ pub async fn generate_instance_from_event(
         network: get_network().to_string(),
         from_addr: "".to_string(),
         to_addr: EvmAddress::from_str(&event.depositor_address)?.to_string(),
-        amount: event.pegin_amount_sates.parse()?,
+        amount: event.pegin_amount_sats.parse()?,
         fee: event.txn_fees[2].parse()?,
         status: InstanceStatus::UserInited.to_string(),
         pegin_request_txid: event.transaction_hash.clone(),

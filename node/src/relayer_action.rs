@@ -3,9 +3,9 @@
 use crate::action::{ChallengeSent, CreateInstance, DisproveSent, InstanceDiscarded};
 use crate::client::goat_chain::WithdrawStatus;
 use crate::client::graphs::graph_query::{
-    BlockRange, BridgeInRequestEvent, CancelWithdrawEvent, GatewayEventEntity, InitWithdrawEvent,
-    ProceedWithdrawEvent, UserGraphWithdrawEvent, WithdrawDisprovedEvent, WithdrawPathsEvent,
-    get_gateway_events_query,
+    BlockRange, BridgeInEvent, BridgeInRequestEvent, CancelWithdrawEvent, CommitteeResponseEvent,
+    GatewayEventEntity, InitWithdrawEvent, ProceedWithdrawEvent, UserGraphWithdrawEvent,
+    WithdrawDisprovedEvent, WithdrawPathsEvent, get_gateway_events_query,
 };
 use crate::client::{btc_chain::BTCClient, goat_chain::GOATClient, graphs::GraphQueryClient};
 use crate::env::{
@@ -179,6 +179,8 @@ pub async fn fetch_and_handle_block_range_events<'a>(
     let mut withdraw_paths_events: Vec<WithdrawPathsEvent> = vec![];
     let mut withdraw_disproved_events: Vec<WithdrawDisprovedEvent> = vec![];
     let mut bridge_in_request_events: Vec<BridgeInRequestEvent> = vec![];
+    let mut committee_response_events: Vec<CommitteeResponseEvent> = vec![];
+    let mut bridge_in_events: Vec<BridgeInEvent> = vec![];
     for event_entity in event_entities {
         let entity = event_entity.clone();
         if let Some(value_vec) = query_res[entity.to_string()].as_array() {
@@ -209,18 +211,29 @@ pub async fn fetch_and_handle_block_range_events<'a>(
                     bridge_in_request_events =
                         serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
                 }
+                GatewayEventEntity::CommitteeResponses => {
+                    committee_response_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
+                GatewayEventEntity::BridgeIns => {
+                    bridge_in_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
             };
         }
     }
     info!(
-        "get user init withdraw events: {}, cancel withdraw events: {}, proceed_withdraw_events:{}, \
-         withdraw_paths_events:{},  withdraw_disproved_events:{}, bridge_in_request_events: {}  block range {from_height}:{to_height}",
+        "get user init withdraw events: {}, cancel withdraw events: {}, proceed_withdraw_events: {}, \
+         withdraw_paths_events: {},  withdraw_disproved_events: {}, bridge_in_request_events: {}  \
+         committee_response_events: {}, bridge_in_events: {} block range {from_height}:{to_height}",
         init_withdraw_events.len(),
         cancel_withdraw_events.len(),
         proceed_withdraw_events.len(),
         withdraw_paths_events.len(),
         withdraw_disproved_events.len(),
-        bridge_in_request_events.len()
+        bridge_in_request_events.len(),
+        committee_response_events.len(),
+        bridge_in_events.len()
     );
     handle_user_withdraw_events(storage_processor, init_withdraw_events, cancel_withdraw_events)
         .await?;
@@ -229,6 +242,8 @@ pub async fn fetch_and_handle_block_range_events<'a>(
     handle_withdraw_disproved_events(storage_processor, withdraw_disproved_events).await?;
     handle_bridge_in_request_events(storage_processor, btc_client, bridge_in_request_events)
         .await?;
+    handle_committee_response_events(storage_processor, committee_response_events).await?;
+    handle_bridge_in_events(storage_processor, bridge_in_events).await?;
     Ok(())
 }
 
@@ -372,6 +387,42 @@ async fn handle_bridge_in_request_events<'a>(
             continue;
         }
         storage_processor.upsert_instance(instance_res.unwrap()).await?;
+    }
+    Ok(())
+}
+
+async fn handle_committee_response_events<'a>(
+    storage_processor: &mut StorageProcessor<'a>,
+    committee_response_events: Vec<CommitteeResponseEvent>,
+) -> Result<(), Box<dyn Error>> {
+    for event in committee_response_events {
+        if let Ok(instance_id) = &Uuid::from_str(&event.instance_id) {
+            storage_processor
+                .update_instance_committee_answer(
+                    instance_id,
+                    &event.committee_address,
+                    &event.pubkey,
+                )
+                .await?;
+        } else {
+            warn!("failed to parse instance id:{event:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn handle_bridge_in_events<'a>(
+    storage_processor: &mut StorageProcessor<'a>,
+    bridge_in_events: Vec<BridgeInEvent>,
+) -> Result<(), Box<dyn Error>> {
+    for event in bridge_in_events {
+        if let Ok(instance_id) = &Uuid::from_str(&event.instance_id) {
+            storage_processor
+                .update_instance_status(instance_id, &InstanceStatus::RelayerL2Minted.to_string())
+                .await?;
+        } else {
+            warn!("failed to parse instance id:{event:?}");
+        }
     }
     Ok(())
 }
@@ -529,7 +580,7 @@ pub async fn monitor_events(
     let mut tx = local_db.start_transaction().await?;
     fetch_and_handle_block_range_events(
         actor.clone(),
-        &btc_client,
+        btc_client,
         &query_client,
         &mut tx,
         &event_entities,
