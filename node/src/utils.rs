@@ -5,9 +5,8 @@ use crate::client::goat_chain::WithdrawStatus;
 use crate::client::goat_chain::utils::{
     get_graph_ids_by_instance_id, validate_committee, validate_operator, validate_relayer,
 };
-use crate::client::graphs::graph_query::GatewayEventEntity;
+use crate::client::graphs::graph_query::{BridgeInRequestEvent, GatewayEventEntity};
 use crate::client::{btc_chain::BTCClient, goat_chain::GOATClient};
-use crate::env;
 use crate::env::*;
 use crate::middleware::AllBehaviours;
 use crate::relayer_action::monitor_events;
@@ -47,17 +46,19 @@ use musig2::{PartialSignature, PubNonce};
 use rand::Rng;
 use secp256k1::Secp256k1;
 use statics::*;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Write};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use store::ipfs::IPFS;
 use store::localdb::{LocalDB, UpdateGraphParams};
 use store::{
-    BridgeInStatus, GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph,
-    GraphStatus, Message, MessageState, MessageType, Node,
+    GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus,
+    Instance, InstanceStatus, Message, MessageState, MessageType, Node,
 };
 use stun_client::{Attribute, Class, Client};
 use tokio_util::sync::CancellationToken;
@@ -1053,7 +1054,7 @@ pub async fn store_graph(
         transaction
             .update_instance_fields(
                 &instance_id,
-                Some(BridgeInStatus::Presigned.to_string()),
+                Some(InstanceStatus::Presigned.to_string()),
                 Some((
                     serialize_hex(&graph.pegin.tx().compute_txid()),
                     (sum_input_value - sum_output_value).to_sat() as i64,
@@ -1258,7 +1259,6 @@ pub async fn wait_tx_appear(
             // println!("Timeout: Transaction not appear after {} seconds", max_wait_secs);
             return Ok(false);
         };
-        // FIXME: should not use esplora directly
         match btc_client.get_tx(txid).await {
             Ok(tx) => {
                 if tx.is_some() {
@@ -1479,25 +1479,37 @@ pub async fn run_watch_event_task(
     interval: u64,
     cancellation_token: CancellationToken,
 ) -> anyhow::Result<String> {
-    let goat_client = GOATClient::new(env::goat_config_from_env().await, env::get_goat_network());
-
+    let goat_client = GOATClient::new(goat_config_from_env().await, get_goat_network());
+    let btc_client = BTCClient::new(None, get_network());
+    let events_map: HashMap<Actor, Vec<GatewayEventEntity>> = HashMap::from([
+        (
+            Actor::Relayer,
+            vec![
+                GatewayEventEntity::InitWithdraws,
+                GatewayEventEntity::CancelWithdraws,
+                GatewayEventEntity::ProceedWithdraws,
+                GatewayEventEntity::WithdrawHappyPaths,
+                GatewayEventEntity::WithdrawUnhappyPaths,
+                GatewayEventEntity::WithdrawDisproveds,
+                GatewayEventEntity::BridgeInRequests,
+            ],
+        ),
+        (
+            Actor::Operator,
+            vec![GatewayEventEntity::ProceedWithdraws, GatewayEventEntity::BridgeInRequests],
+        ),
+        (Actor::Committee, vec![GatewayEventEntity::BridgeInRequests]),
+    ]);
     loop {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(interval)) => {
                 // Execute the normal monitoring logic
-                if actor.clone() == Actor::Relayer {
-                    match monitor_events(
+                match monitor_events(
                         actor.clone(),
                         &goat_client,
+                        &btc_client,
                         &local_db,
-                        vec![
-                            GatewayEventEntity::InitWithdraws,
-                            GatewayEventEntity::CancelWithdraws,
-                            GatewayEventEntity::ProceedWithdraws,
-                            GatewayEventEntity::WithdrawHappyPaths,
-                            GatewayEventEntity::WithdrawUnhappyPaths,
-                            GatewayEventEntity::WithdrawDisproveds,
-                        ],
+                        events_map.get(&actor).cloned().unwrap_or_default()
                     )
                     .await
                     {
@@ -1506,22 +1518,6 @@ pub async fn run_watch_event_task(
                             tracing::error!(e)
                         }
                     }
-                }
-                if actor.clone() == Actor::Operator {
-                    match monitor_events(
-                        actor.clone(),
-                        &goat_client,
-                        &local_db,
-                        vec![GatewayEventEntity::ProceedWithdraws],
-                    )
-                    .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => {
-                            tracing::error!(e)
-                        }
-                    }
-                }
             }
             _ = cancellation_token.cancelled() => {
                 tracing::info!("Watch event task received shutdown signal");
@@ -1738,4 +1734,29 @@ pub fn generate_local_key() -> libp2p::identity::Keypair {
 pub fn temp_file() -> String {
     let tmp_db = tempfile::NamedTempFile::new().unwrap();
     tmp_db.path().as_os_str().to_str().unwrap().to_string()
+}
+
+pub async fn generate_instance_from_event(
+    _btc_client: &BTCClient,
+    event: &BridgeInRequestEvent,
+) -> anyhow::Result<Instance> {
+    // TODO decode event to get from_addr unsign_pegin_confirm_tx pegin_prepare_txid pegin_cancel_txid
+    let instance = Instance {
+        instance_id: Uuid::from_str(&event.instance_id)?,
+        network: get_network().to_string(),
+        from_addr: "".to_string(),
+        to_addr: EvmAddress::from_str(&event.depositor_address)?.to_string(),
+        amount: event.pegin_amount_sates.parse()?,
+        fee: event.txn_fees[2].parse()?,
+        status: InstanceStatus::UserInited.to_string(),
+        pegin_request_txid: event.transaction_hash.clone(),
+        pegin_request_height: event.block_number.parse()?,
+        pegin_prepare_txid: None,
+        pegin_cancel_txid: None,
+        unsign_pegin_confirm_tx: None,
+        created_at: current_time_secs(),
+        updated_at: current_time_secs(),
+        ..Default::default()
+    };
+    Ok(instance)
 }

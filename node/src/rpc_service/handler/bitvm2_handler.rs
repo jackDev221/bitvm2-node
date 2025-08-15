@@ -16,7 +16,7 @@ use std::default::Default;
 use std::str::FromStr;
 use std::sync::Arc;
 use store::localdb::FilterGraphParams;
-use store::{BridgeInStatus, GoatTxType, GraphFullData, GraphStatus, modify_graph_status};
+use store::{GoatTxType, GraphFullData, GraphStatus, InstanceStatus, modify_graph_status};
 use uuid::Uuid;
 
 /// Get instance settings
@@ -93,7 +93,7 @@ pub async fn graph_presign_check(
 ) -> (StatusCode, Json<GraphPresignCheckResponse>) {
     let resp = GraphPresignCheckResponse {
         instance_id: params.instance_id.to_string(),
-        instance_status: BridgeInStatus::Submitted.to_string(),
+        instance_status: InstanceStatus::UserInited.to_string(),
         graph_status: HashMap::new(),
         tx: None,
     };
@@ -684,8 +684,8 @@ pub async fn get_instances_overview(
         let mut storage_process = app_state.local_db.acquire().await?;
         let (pegin_sum, pegin_count) = storage_process
             .get_sum_bridge_in(&[
-                BridgeInStatus::L1Broadcasted.to_string(),
-                BridgeInStatus::L2Minted.to_string(),
+                InstanceStatus::L1Broadcasted.to_string(),
+                InstanceStatus::L2Minted.to_string(),
             ])
             .await?;
         let (pegout_sum, pegout_count) = storage_process

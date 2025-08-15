@@ -3,19 +3,20 @@
 use crate::action::{ChallengeSent, CreateInstance, DisproveSent, InstanceDiscarded};
 use crate::client::goat_chain::WithdrawStatus;
 use crate::client::graphs::graph_query::{
-    BlockRange, CancelWithdrawEvent, GatewayEventEntity, InitWithdrawEvent, ProceedWithdrawEvent,
-    UserGraphWithdrawEvent, WithdrawDisproved, WithdrawPathsEvent, get_gateway_events_query,
+    BlockRange, BridgeInRequestEvent, CancelWithdrawEvent, GatewayEventEntity, InitWithdrawEvent,
+    ProceedWithdrawEvent, UserGraphWithdrawEvent, WithdrawDisprovedEvent, WithdrawPathsEvent,
+    get_gateway_events_query,
 };
 use crate::client::{btc_chain::BTCClient, goat_chain::GOATClient, graphs::GraphQueryClient};
 use crate::env::{
-    GRAPH_OPERATOR_DATA_UPLOAD_TIME_EXPIRED, INSTANCE_PRESIGNED_TIME_EXPIRED,
-    LOAD_HISTORY_EVENT_NO_WOKING_MAX_SECS, MESSAGE_BROADCAST_MAX_TIMES, MESSAGE_EXPIRE_TIME,
-    MESSAGE_RESEND_INTERVAL_SECOND,
+    GRAPH_OPERATOR_DATA_UPLOAD_TIME_EXPIRED, LOAD_HISTORY_EVENT_NO_WOKING_MAX_SECS,
+    MESSAGE_BROADCAST_MAX_TIMES, MESSAGE_EXPIRE_TIME, MESSAGE_RESEND_INTERVAL_SECOND,
 };
 use crate::rpc_service::{P2pUserData, UTXO, current_time_secs};
 use crate::utils::{
-    create_goat_tx_record, finish_withdraw_disproved, get_graph, obsolete_sibling_graphs,
-    outpoint_spent_txid, reflect_goat_address, strip_hex_prefix_owned, update_graph_fields,
+    create_goat_tx_record, finish_withdraw_disproved, generate_instance_from_event, get_graph,
+    obsolete_sibling_graphs, outpoint_spent_txid, reflect_goat_address, strip_hex_prefix_owned,
+    update_graph_fields,
 };
 use crate::{
     action::{
@@ -43,8 +44,8 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
 use store::{
-    BridgeInStatus, GoatTxProveStatus, GoatTxRecord, GoatTxType, GraphStatus,
-    GraphTickActionMetaData, MessageState, MessageType, WatchContract, WatchContractStatus,
+    GoatTxProveStatus, GoatTxRecord, GoatTxType, GraphStatus, GraphTickActionMetaData,
+    InstanceStatus, MessageState, MessageType, WatchContract, WatchContractStatus,
 };
 use tokio::time::sleep;
 use tracing::{info, warn};
@@ -158,6 +159,7 @@ pub async fn get_initialized_graphs(
 
 pub async fn fetch_and_handle_block_range_events<'a>(
     actor: Actor,
+    btc_client: &BTCClient,
     client: &GraphQueryClient,
     storage_processor: &mut StorageProcessor<'a>,
     event_entities: &[GatewayEventEntity],
@@ -175,7 +177,8 @@ pub async fn fetch_and_handle_block_range_events<'a>(
     let mut cancel_withdraw_events = vec![];
     let mut proceed_withdraw_events: Vec<ProceedWithdrawEvent> = vec![];
     let mut withdraw_paths_events: Vec<WithdrawPathsEvent> = vec![];
-    let mut withdraw_disproved_events: Vec<WithdrawDisproved> = vec![];
+    let mut withdraw_disproved_events: Vec<WithdrawDisprovedEvent> = vec![];
+    let mut bridge_in_request_events: Vec<BridgeInRequestEvent> = vec![];
     for event_entity in event_entities {
         let entity = event_entity.clone();
         if let Some(value_vec) = query_res[entity.to_string()].as_array() {
@@ -202,23 +205,30 @@ pub async fn fetch_and_handle_block_range_events<'a>(
                     withdraw_disproved_events =
                         serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
                 }
+                GatewayEventEntity::BridgeInRequests => {
+                    bridge_in_request_events =
+                        serde_json::from_value(serde_json::Value::Array(value_vec.clone()))?;
+                }
             };
         }
     }
     info!(
         "get user init withdraw events: {}, cancel withdraw events: {}, proceed_withdraw_events:{}, \
-         withdraw_paths_events:{},  withdraw_disproved_events:{},  block range {from_height}:{to_height}",
+         withdraw_paths_events:{},  withdraw_disproved_events:{}, bridge_in_request_events: {}  block range {from_height}:{to_height}",
         init_withdraw_events.len(),
         cancel_withdraw_events.len(),
         proceed_withdraw_events.len(),
         withdraw_paths_events.len(),
         withdraw_disproved_events.len(),
+        bridge_in_request_events.len()
     );
     handle_user_withdraw_events(storage_processor, init_withdraw_events, cancel_withdraw_events)
         .await?;
     handle_proceed_withdraw_events(actor, storage_processor, proceed_withdraw_events).await?;
     handle_withdraw_paths_events(storage_processor, withdraw_paths_events).await?;
     handle_withdraw_disproved_events(storage_processor, withdraw_disproved_events).await?;
+    handle_bridge_in_request_events(storage_processor, btc_client, bridge_in_request_events)
+        .await?;
     Ok(())
 }
 
@@ -318,7 +328,7 @@ async fn handle_withdraw_paths_events<'a>(
 
 async fn handle_withdraw_disproved_events<'a>(
     storage_processor: &mut StorageProcessor<'a>,
-    withdraw_disproved_events: Vec<WithdrawDisproved>,
+    withdraw_disproved_events: Vec<WithdrawDisprovedEvent>,
 ) -> Result<(), Box<dyn Error>> {
     for event in withdraw_disproved_events {
         let challenger_reward_add: i64 = event.challenger_amount_sats.parse::<i64>()?;
@@ -350,8 +360,25 @@ async fn handle_withdraw_disproved_events<'a>(
     Ok(())
 }
 
+async fn handle_bridge_in_request_events<'a>(
+    storage_processor: &mut StorageProcessor<'a>,
+    btc_client: &BTCClient,
+    bridge_in_request_events: Vec<BridgeInRequestEvent>,
+) -> Result<(), Box<dyn Error>> {
+    for event in bridge_in_request_events {
+        let instance_res = generate_instance_from_event(btc_client, &event).await;
+        if instance_res.is_err() {
+            warn!("generate instance failed from event:{event:?}");
+            continue;
+        }
+        storage_processor.create_instance(instance_res.unwrap()).await?;
+    }
+    Ok(())
+}
+
 pub async fn fetch_history_events(
     actor: Actor,
+    btc_client: &BTCClient,
     local_db: &LocalDB,
     query_client: &GraphQueryClient,
     watch_contract: WatchContract,
@@ -384,6 +411,7 @@ pub async fn fetch_history_events(
 
             fetch_and_handle_block_range_events(
                 actor.clone(),
+                btc_client,
                 query_client,
                 &mut tx,
                 &event_entities,
@@ -434,6 +462,7 @@ pub async fn fetch_history_events(
 pub async fn monitor_events(
     actor: Actor,
     goat_client: &GOATClient,
+    btc_client: &BTCClient,
     local_db: &LocalDB,
     event_entities: Vec<GatewayEventEntity>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -477,9 +506,11 @@ pub async fn monitor_events(
         let local_db_clone = local_db.clone();
         let query_client_clone = query_client.clone();
         let event_entities_clone = event_entities.clone();
+        let btc_client_clone = btc_client.clone();
         tokio::spawn(async move {
             let _ = fetch_history_events(
                 actor.clone(),
+                &btc_client_clone,
                 &local_db_clone,
                 &query_client_clone,
                 watch_contract_clone,
@@ -498,6 +529,7 @@ pub async fn monitor_events(
     let mut tx = local_db.start_transaction().await?;
     fetch_and_handle_block_range_events(
         actor.clone(),
+        &btc_client,
         &query_client,
         &mut tx,
         &event_entities,
@@ -549,14 +581,15 @@ pub async fn scan_bridge_in_prepare(
         .update_messages_state(&ids, MessageState::Processed.to_string(), current_time)
         .await?;
 
-    let expired_num = storage_process
-        .update_expired_instance(
-            &BridgeInStatus::Submitted.to_string(),
-            &BridgeInStatus::PresignedFailed.to_string(),
-            current_time - INSTANCE_PRESIGNED_TIME_EXPIRED,
-        )
-        .await?;
-    info!("Presigned expired instances is {expired_num}");
+    // TODO UPDAT
+    // let expired_num = storage_process
+    //     .update_expired_instance(
+    //         &BridgeInStatus::Submitted.to_string(),
+    //         &BridgeInStatus::PresignedFailed.to_string(),
+    //         current_time - INSTANCE_PRESIGNED_TIME_EXPIRED,
+    //     )
+    //     .await?;
+    // info!("Presigned expired instances is {expired_num}");
 
     Ok(())
 }
@@ -569,7 +602,7 @@ pub async fn scan_l1_broadcast_txs(
     info!("Starting into scan_l1_broadcast_txs");
     let mut storage_process = local_db.acquire().await?;
     let (instances, _) = storage_process
-        .instance_list(None, Some(BridgeInStatus::Presigned.to_string()), None, None, None)
+        .instance_list(None, Some(InstanceStatus::Presigned.to_string()), None, None, None)
         .await?;
 
     info!("Starting into scan_l1_broadcast_txs, need to check instance_size:{} ", instances.len());
@@ -585,7 +618,7 @@ pub async fn scan_l1_broadcast_txs(
             let update_res = storage_process
                 .update_instance_fields(
                     &instance.instance_id,
-                    Some(BridgeInStatus::L1Broadcasted.to_string()),
+                    Some(InstanceStatus::L1Broadcasted.to_string()),
                     None,
                     None,
                 )
@@ -616,7 +649,7 @@ pub async fn scan_l1_broadcast_txs(
         info!("update_l1_broadcast_txs: {} discarded instances", discarded_instances.len());
         let mut tx = local_db.start_transaction().await?;
         tx.update_batch_instance_status(
-            &BridgeInStatus::Discarded.to_string(),
+            &InstanceStatus::Discarded.to_string(),
             &discarded_instances,
         )
         .await?;
@@ -678,7 +711,7 @@ pub async fn scan_post_pegin_data(
     info!("Starting into post_pegin_data");
     let mut storage_process = local_db.acquire().await?;
     let (instances, _) = storage_process
-        .instance_list(None, Some(BridgeInStatus::L1Broadcasted.to_string()), None, None, None)
+        .instance_list(None, Some(InstanceStatus::L1Broadcasted.to_string()), None, None, None)
         .await?;
 
     info!("Starting into scan post_pegin_data, need to send instance_size:{} ", instances.len());
@@ -703,7 +736,7 @@ pub async fn scan_post_pegin_data(
             storage_process
                 .update_instance_fields(
                     &instance.instance_id,
-                    Some(BridgeInStatus::L2Minted.to_string()),
+                    Some(InstanceStatus::L2Minted.to_string()),
                     None,
                     None,
                 )
@@ -763,7 +796,7 @@ pub async fn scan_post_operator_data(
     let (instances, _) = storage_process
         .instance_list(
             None,
-            Some(BridgeInStatus::L2Minted.to_string()),
+            Some(InstanceStatus::L2Minted.to_string()),
             Some(current_time - GRAPH_OPERATOR_DATA_UPLOAD_TIME_EXPIRED),
             None,
             None,

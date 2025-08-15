@@ -15,6 +15,8 @@ pub enum GatewayEventEntity {
     WithdrawUnhappyPaths,
     #[strum(serialize = "withdrawDisproveds")]
     WithdrawDisproveds,
+    #[strum(serialize = "bridgeInRequests")]
+    BridgeInRequests,
 }
 
 impl GatewayEventEntity {
@@ -70,6 +72,19 @@ impl GatewayEventEntity {
                     .add_field(&tag, "disproverAddress")
                     .add_field(&tag, "challengerRewardAmountSats")
                     .add_field(&tag, "disproverRewardAmountSats")
+                    .set_order_by(&tag, "blockNumber", "asc");
+            }
+
+            GatewayEventEntity::BridgeInRequests => {
+                builder = builder
+                    .add_field(&tag, "id")
+                    .add_field(&tag, "instanceId")
+                    .add_field(&tag, "depositorAddress")
+                    .add_field(&tag, "peginAmountSats")
+                    .add_field(&tag, "txnFees")
+                    .add_field(&tag, "userInputs")
+                    .add_field(&tag, "transactionHash")
+                    .add_field(&tag, "blockNumber")
                     .set_order_by(&tag, "blockNumber", "asc");
             }
         }
@@ -162,7 +177,7 @@ pub struct WithdrawPathsEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct WithdrawDisproved {
+pub struct WithdrawDisprovedEvent {
     pub id: String,
     #[serde(rename = "transactionHash")]
     pub transaction_hash: String,
@@ -180,6 +195,25 @@ pub struct WithdrawDisproved {
     pub disprover_addr: String,
     #[serde(rename = "disproverRewardAmountSats")]
     pub disprover_amount_sats: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BridgeInRequestEvent {
+    pub id: String,
+    #[serde(rename = "transactionHash")]
+    pub transaction_hash: String,
+    #[serde(rename = "blockNumber")]
+    pub block_number: String,
+    #[serde(rename = "instanceId")]
+    pub instance_id: String,
+    #[serde(rename = "depositorAddress")]
+    pub depositor_address: String,
+    #[serde(rename = "peginAmountSats")]
+    pub pegin_amount_sates: String,
+    #[serde(rename = "txnFees")]
+    pub txn_fees: [String; 3],
+    #[serde(rename = "userInputs")]
+    pub user_inputs: String,
 }
 
 #[derive(Debug, Clone)]
