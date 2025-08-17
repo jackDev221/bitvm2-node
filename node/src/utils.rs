@@ -5,11 +5,10 @@ use crate::client::goat_chain::WithdrawStatus;
 use crate::client::goat_chain::utils::{
     get_graph_ids_by_instance_id, validate_committee, validate_operator, validate_relayer,
 };
-use crate::client::graphs::graph_query::{BridgeInRequestEvent, GatewayEventEntity};
+use crate::client::graphs::graph_query::BridgeInRequestEvent;
 use crate::client::{btc_chain::BTCClient, goat_chain::GOATClient};
 use crate::env::*;
 use crate::middleware::AllBehaviours;
-use crate::relayer_action::monitor_events;
 use crate::rpc_service::proof::Groth16ProofValue;
 use crate::rpc_service::{current_time_secs, routes};
 use alloy::primitives::Address as EvmAddress;
@@ -46,13 +45,13 @@ use musig2::{PartialSignature, PubNonce};
 use rand::Rng;
 use secp256k1::Secp256k1;
 use statics::*;
-use std::collections::HashMap;
+
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Write};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::str::FromStr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use store::ipfs::IPFS;
 use store::localdb::{InstanceUpdateParams, LocalDB, UpdateGraphParams};
@@ -61,7 +60,7 @@ use store::{
     Instance, InstanceStatus, Message, MessageState, MessageType, Node,
 };
 use stun_client::{Attribute, Class, Client};
-use tokio_util::sync::CancellationToken;
+
 use tracing::warn;
 use uuid::Uuid;
 
@@ -1470,60 +1469,6 @@ pub async fn obsolete_sibling_graphs(
         }
     }
     Ok(())
-}
-
-pub async fn run_watch_event_task(
-    actor: Actor,
-    local_db: LocalDB,
-    interval: u64,
-    cancellation_token: CancellationToken,
-) -> anyhow::Result<String> {
-    let goat_client = GOATClient::new(goat_config_from_env().await, get_goat_network());
-    let btc_client = BTCClient::new(None, get_network());
-    let events_map: HashMap<Actor, Vec<GatewayEventEntity>> = HashMap::from([
-        (
-            Actor::Relayer,
-            vec![
-                GatewayEventEntity::InitWithdraws,
-                GatewayEventEntity::CancelWithdraws,
-                GatewayEventEntity::ProceedWithdraws,
-                GatewayEventEntity::WithdrawHappyPaths,
-                GatewayEventEntity::WithdrawUnhappyPaths,
-                GatewayEventEntity::WithdrawDisproveds,
-                GatewayEventEntity::BridgeInRequests,
-            ],
-        ),
-        (
-            Actor::Operator,
-            vec![GatewayEventEntity::ProceedWithdraws, GatewayEventEntity::BridgeInRequests],
-        ),
-        (Actor::Committee, vec![GatewayEventEntity::BridgeInRequests]),
-    ]);
-    loop {
-        tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(interval)) => {
-                // Execute the normal monitoring logic
-                match monitor_events(
-                        actor.clone(),
-                        &goat_client,
-                        &btc_client,
-                        &local_db,
-                        events_map.get(&actor).cloned().unwrap_or_default()
-                    )
-                    .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => {
-                            tracing::error!(e)
-                        }
-                    }
-            }
-            _ = cancellation_token.cancelled() => {
-                tracing::info!("Watch event task received shutdown signal");
-                return Ok("watch_shutdown".to_string());
-            }
-        }
-    }
 }
 
 /// Retrieve the server's public IP via NAT protocol and combine it with
