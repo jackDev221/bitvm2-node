@@ -57,7 +57,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
 use store::localdb::{InstanceUpdateParams, LocalDB, UpdateGraphParams};
 use store::{
-    GoatTxProceedWithdrawExtra, GoatTxProveStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus,
+    GoatTxProceedWithdrawExtra, GoatTxProcessingStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus,
     Instance, InstanceStatus, Message, MessageState, MessageType, Node,
 };
 use stun_client::{Attribute, Class, Client};
@@ -724,7 +724,7 @@ pub async fn get_groth16_proof(
                 tx_hash: "".to_string(),
                 height: 0,
                 is_local: false,
-                prove_status: GoatTxProveStatus::Pending.to_string(),
+                processing_status: GoatTxProcessingStatus::Pending.to_string(),
                 extra: Some(
                     serde_json::to_string(&GoatTxProceedWithdrawExtra { challenge_txid }).unwrap(),
                 ),
@@ -975,7 +975,7 @@ pub async fn create_goat_tx_record(
                 height: receipt.block_number.unwrap() as i64,
                 is_local: true,
                 extra: None,
-                prove_status,
+                processing_status: prove_status,
                 created_at: current_time_secs(),
             })
             .await?;
@@ -1625,9 +1625,9 @@ pub async fn operator_scan_ready_proof(
     let client = reqwest::Client::new();
     let mut storage_proccessor = local_db.acquire().await?;
     let check_txs = storage_proccessor
-        .get_goat_tx_record_by_prove_status(
+        .get_goat_tx_record_by_processing_status(
             &GoatTxType::ProceedWithdraw.to_string(),
-            &GoatTxProveStatus::Pending.to_string(),
+            &GoatTxProcessingStatus::Pending.to_string(),
         )
         .await?;
 
@@ -1673,7 +1673,7 @@ pub async fn operator_scan_ready_proof(
                             &proof_value.public_values,
                             &proof_value.verifier_id,
                             &proof_value.zkm_version,
-                            &GoatTxProveStatus::Proved.to_string(),
+                            &GoatTxProcessingStatus::Processed.to_string(),
                         )
                         .await?;
                 } else {
@@ -1702,7 +1702,7 @@ pub async fn operator_scan_ready_proof(
                     &tx.graph_id,
                     &tx.instance_id,
                     &tx.tx_type,
-                    &GoatTxProveStatus::Proved.to_string(),
+                    &GoatTxProcessingStatus::Processed.to_string(),
                 )
                 .await?;
             // storage_proccessor

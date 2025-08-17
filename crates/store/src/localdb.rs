@@ -2611,7 +2611,7 @@ impl<'a> StorageProcessor<'a> {
                             tx_hash,
                             height,
                             is_local,
-                            prove_status,
+                            processing_status,
                             extra,
                             created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2621,7 +2621,7 @@ impl<'a> StorageProcessor<'a> {
             update_goat_tx_record.tx_hash,
             update_goat_tx_record.height,
             update_goat_tx_record.is_local,
-            update_goat_tx_record.prove_status,
+            update_goat_tx_record.processing_status,
             update_goat_tx_record.extra,
             update_goat_tx_record.created_at
         )
@@ -2644,7 +2644,7 @@ impl<'a> StorageProcessor<'a> {
                         tx_hash,
                         height,
                         is_local,
-                        prove_status,
+                        processing_status,
                         extra,
                         created_at
             FROM goat_tx_record
@@ -2657,7 +2657,7 @@ impl<'a> StorageProcessor<'a> {
         .await?)
     }
 
-    pub async fn get_goat_tx_record_by_prove_status(
+    pub async fn get_goat_tx_record_by_processing_status(
         &mut self,
         tx_type: &str,
         prove_status: &str,
@@ -2669,12 +2669,12 @@ impl<'a> StorageProcessor<'a> {
                         tx_type, tx_hash,
                         height,
                         is_local,
-                        prove_status,
+                        processing_status,
                         extra,
                         created_at
             FROM goat_tx_record
             WHERE tx_type = ?
-                AND prove_status = ?
+                AND processing_status = ?
                 ORDER BY height ASC",
             tx_type,
             prove_status
@@ -2683,10 +2683,10 @@ impl<'a> StorageProcessor<'a> {
         .await?)
     }
 
-    pub async fn get_need_proved_goat_tx_heights(
+    pub async fn get_goat_tx_records_by_height_range_and_filters(
         &mut self,
         tx_type: &str,
-        prove_status: &str,
+        processing_status: &str,
         start_number: i64,
         end_number: i64,
     ) -> anyhow::Result<Vec<i64>> {
@@ -2694,41 +2694,18 @@ impl<'a> StorageProcessor<'a> {
             "SELECT DISTINCT height
             FROM goat_tx_record
             WHERE tx_type = ?
-                AND prove_status = ?
+                AND processing_status = ?
                 AND height > ?
                 AND height <= ?
                 ORDER BY height ASC",
             tx_type,
-            prove_status,
+            processing_status,
             start_number,
             end_number,
         )
         .fetch_all(self.conn())
         .await?;
         Ok(records.iter().map(|v| v.height).collect())
-    }
-
-    pub async fn update_goat_tx_proved_state_by_height(
-        &mut self,
-        tx_type: &str,
-        old_prove_statue: &str,
-        new_prove_status: &str,
-        max_block_height: i64,
-    ) -> anyhow::Result<()> {
-        sqlx::query!(
-            "UPDATE goat_tx_record
-                SET prove_status = ?
-            WHERE tx_type = ?
-                AND height < ?
-                AND prove_status = ?",
-            new_prove_status,
-            tx_type,
-            max_block_height,
-            old_prove_statue
-        )
-        .execute(self.conn())
-        .await?;
-        Ok(())
     }
 
     pub async fn get_tx_info_for_gen_proof(
@@ -2767,7 +2744,7 @@ impl<'a> StorageProcessor<'a> {
     ) -> anyhow::Result<()> {
         sqlx::query!(
             "UPDATE goat_tx_record
-             SET prove_status = ?
+             SET processing_status = ?
              where instance_id = ?
                AND graph_id = ?
                AND tx_type = ?",

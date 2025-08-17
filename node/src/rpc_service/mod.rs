@@ -237,7 +237,7 @@ mod tests {
     use std::str::FromStr;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    use store::{GoatTxProveStatus, GoatTxRecord, GoatTxType, GraphStatus};
+    use store::{GoatTxProcessingStatus, GoatTxRecord, GoatTxType, GraphStatus};
     use tokio::time::sleep;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
@@ -851,7 +851,7 @@ mod tests {
                         tx_hash: "".to_string(),
                         height: groth16_block_number,
                         is_local: false,
-                        prove_status: GoatTxProveStatus::Proved.to_string(),
+                        processing_status: GoatTxProcessingStatus::Processed.to_string(),
                         extra: None,
                         created_at: 0,
                     })

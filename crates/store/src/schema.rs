@@ -547,11 +547,11 @@ pub enum GoatTxType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, Display, EnumString)]
-pub enum GoatTxProveStatus {
+pub enum GoatTxProcessingStatus {
     #[default]
-    NoNeed,
+    Skipped,
     Pending,
-    Proved,
+    Processed,
     Failed,
 }
 
@@ -563,7 +563,7 @@ pub struct GoatTxRecord {
     pub tx_hash: String,
     pub height: i64,
     pub is_local: bool,
-    pub prove_status: String,
+    pub processing_status: String,
     pub extra: Option<String>,
     pub created_at: i64,
 }

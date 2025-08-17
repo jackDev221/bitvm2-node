@@ -44,7 +44,7 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
 use store::{
-    GoatTxProveStatus, GoatTxRecord, GoatTxType, GraphStatus, GraphTickActionMetaData,
+    GoatTxProcessingStatus, GoatTxRecord, GoatTxType, GraphStatus, GraphTickActionMetaData,
     InstanceStatus, MessageState, MessageType, WatchContract, WatchContractStatus,
 };
 use tokio::time::sleep;
@@ -237,11 +237,17 @@ pub async fn fetch_and_handle_block_range_events<'a>(
     );
     handle_user_withdraw_events(storage_processor, init_withdraw_events, cancel_withdraw_events)
         .await?;
-    handle_proceed_withdraw_events(actor, storage_processor, proceed_withdraw_events).await?;
+    handle_proceed_withdraw_events(actor.clone(), storage_processor, proceed_withdraw_events)
+        .await?;
     handle_withdraw_paths_events(storage_processor, withdraw_paths_events).await?;
     handle_withdraw_disproved_events(storage_processor, withdraw_disproved_events).await?;
-    handle_bridge_in_request_events(storage_processor, btc_client, bridge_in_request_events)
-        .await?;
+    handle_bridge_in_request_events(
+        storage_processor,
+        actor.clone(),
+        btc_client,
+        bridge_in_request_events,
+    )
+    .await?;
     handle_committee_response_events(storage_processor, committee_response_events).await?;
     handle_bridge_in_events(storage_processor, bridge_in_events).await?;
     Ok(())
@@ -298,10 +304,10 @@ async fn handle_proceed_withdraw_events<'a>(
     storage_processor: &mut StorageProcessor<'a>,
     proceed_withdraw_events: Vec<ProceedWithdrawEvent>,
 ) -> Result<(), Box<dyn Error>> {
-    let prove_status = if actor == Actor::Operator && env::get_proof_server_url().is_none() {
-        GoatTxProveStatus::Pending.to_string()
+    let processing_status = if actor == Actor::Operator && env::get_proof_server_url().is_none() {
+        GoatTxProcessingStatus::Pending.to_string()
     } else {
-        GoatTxProveStatus::NoNeed.to_string()
+        GoatTxProcessingStatus::Skipped.to_string()
     };
     for event in proceed_withdraw_events {
         storage_processor
@@ -312,7 +318,7 @@ async fn handle_proceed_withdraw_events<'a>(
                 tx_hash: event.transaction_hash,
                 height: event.block_number.parse::<i64>()?,
                 is_local: false,
-                prove_status: prove_status.clone(),
+                processing_status: processing_status.clone(),
                 extra: None,
                 created_at: current_time_secs(),
             })
@@ -377,9 +383,15 @@ async fn handle_withdraw_disproved_events<'a>(
 
 async fn handle_bridge_in_request_events<'a>(
     storage_processor: &mut StorageProcessor<'a>,
+    actor: Actor,
     btc_client: &BTCClient,
     bridge_in_request_events: Vec<BridgeInRequestEvent>,
 ) -> Result<(), Box<dyn Error>> {
+    let processing_status = if actor == Actor::Committee {
+        GoatTxProcessingStatus::Pending.to_string()
+    } else {
+        GoatTxProcessingStatus::Skipped.to_string()
+    };
     for event in bridge_in_request_events {
         let instance_res = generate_instance_from_event(btc_client, &event).await;
         if instance_res.is_err() {
@@ -387,6 +399,19 @@ async fn handle_bridge_in_request_events<'a>(
             continue;
         }
         storage_processor.upsert_instance(instance_res.unwrap()).await?;
+        storage_processor
+            .upsert_goat_tx_record(&GoatTxRecord {
+                instance_id: Uuid::from_str(&strip_hex_prefix_owned(&event.instance_id))?,
+                graph_id: Uuid::nil(),
+                tx_type: GoatTxType::ProceedWithdraw.to_string(),
+                tx_hash: event.transaction_hash,
+                height: event.block_number.parse::<i64>()?,
+                is_local: false,
+                processing_status: processing_status.clone(),
+                extra: None,
+                created_at: current_time_secs(),
+            })
+            .await?
     }
     Ok(())
 }
@@ -818,7 +843,7 @@ pub async fn scan_post_pegin_data(
                         instance.instance_id,
                         &tx_hash,
                         GoatTxType::PostPeginData,
-                        GoatTxProveStatus::NoNeed.to_string(),
+                        GoatTxProcessingStatus::Skipped.to_string(),
                     )
                     .await?;
 
@@ -883,7 +908,7 @@ pub async fn scan_post_operator_data(
                         instance.instance_id,
                         &tx_hash,
                         GoatTxType::PostOperatorData,
-                        GoatTxProveStatus::NoNeed.to_string(),
+                        GoatTxProcessingStatus::Skipped.to_string(),
                     )
                     .await?;
 
@@ -1025,7 +1050,7 @@ pub async fn scan_kickoff(
                             instance_id,
                             &tx_hash,
                             GoatTxType::ProceedWithdraw,
-                            GoatTxProveStatus::NoNeed.to_string(),
+                            GoatTxProcessingStatus::Skipped.to_string(),
                         )
                         .await?;
 
@@ -1270,7 +1295,7 @@ pub async fn scan_take1(
                             instance_id,
                             &tx_hash,
                             GoatTxType::WithdrawHappyPath,
-                            GoatTxProveStatus::NoNeed.to_string(),
+                            GoatTxProcessingStatus::Skipped.to_string(),
                         )
                         .await?;
                         update_graph_fields(
@@ -1422,7 +1447,7 @@ pub async fn scan_take2(
                             instance_id,
                             &tx_hash,
                             GoatTxType::WithdrawUnhappyPath,
-                            GoatTxProveStatus::NoNeed.to_string(),
+                            GoatTxProcessingStatus::Skipped.to_string(),
                         )
                         .await?;
                         update_graph_fields(
@@ -1486,7 +1511,7 @@ pub async fn scan_take2(
                     instance_id,
                     &tx_hash,
                     GoatTxType::WithdrawDisproved,
-                    GoatTxProveStatus::NoNeed.to_string(),
+                    GoatTxProcessingStatus::Skipped.to_string(),
                 )
                 .await?;
                 // in case challenger never broadcast DisproveSent
