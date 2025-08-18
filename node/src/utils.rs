@@ -54,10 +54,10 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use store::ipfs::IPFS;
-use store::localdb::{InstanceUpdateParams, LocalDB, UpdateGraphParams};
+use store::localdb::{InstanceUpdate, LocalDB, UpdateGraphParams};
 use store::{
-    GoatTxProceedWithdrawExtra, GoatTxProcessingStatus, GoatTxRecord, GoatTxType, Graph, GraphStatus,
-    Instance, InstanceStatus, Message, MessageState, MessageType, Node,
+    GoatTxProceedWithdrawExtra, GoatTxProcessingStatus, GoatTxRecord, GoatTxType, Graph,
+    GraphStatus, Instance, InstanceStatus, Message, MessageState, MessageType, Node,
 };
 use stun_client::{Attribute, Class, Client};
 
@@ -1051,8 +1051,8 @@ pub async fn store_graph(
             graph.pegin.input_amounts.iter().fold(Amount::ZERO, |acc, v| acc + *v);
         let sum_output_value = pegin_tx.output.iter().fold(Amount::ZERO, |acc, v| acc + v.value);
         transaction
-            .update_instance_with_params(
-                &InstanceUpdateParams::new(instance_id)
+            .update_instance(
+                &InstanceUpdate::new(instance_id)
                     .with_pegin_confirm(
                         serialize_hex(&graph.pegin.tx().compute_txid()),
                         (sum_input_value - sum_output_value).to_sat() as i64,
@@ -1643,7 +1643,7 @@ pub async fn operator_scan_ready_proof(
                 challenge_txid,
             }));
             storage_proccessor
-                .update_goat_tx_record_prove_status(
+                .update_goat_tx_record_processing_status(
                     &tx.graph_id,
                     &tx.instance_id,
                     &tx.tx_type,
@@ -1684,7 +1684,7 @@ pub async fn generate_instance_from_event(
     _btc_client: &BTCClient,
     event: &BridgeInRequestEvent,
 ) -> anyhow::Result<Instance> {
-    // TODO decode event to get from_addr unsign_pegin_confirm_tx pegin_prepare_txid pegin_cancel_txid
+    // TODO decode event to get from_addr unsign_pegin_confirm_tx pegin_prepare_txid pegin_cancel_txid, timeout
     let instance = Instance {
         instance_id: Uuid::from_str(&event.instance_id)?,
         network: get_network().to_string(),
@@ -1698,6 +1698,7 @@ pub async fn generate_instance_from_event(
         pegin_prepare_txid: None,
         pegin_cancel_txid: None,
         unsign_pegin_confirm_tx: None,
+        timeout: 0,
         created_at: current_time_secs(),
         updated_at: current_time_secs(),
         ..Default::default()

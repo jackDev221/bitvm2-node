@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use crate::client::btc_chain::BTCClient;
 use crate::client::goat_chain::GOATClient;
 use crate::client::graphs::GraphQueryClient;
@@ -8,11 +7,13 @@ use crate::client::graphs::graph_query::{
     WithdrawDisprovedEvent, WithdrawPathsEvent, get_gateway_events_query,
 };
 use crate::env;
-use crate::env::{get_goat_network, get_network, goat_config_from_env, LOAD_HISTORY_EVENT_NO_WOKING_MAX_SECS};
+use crate::env::{
+    LOAD_HISTORY_EVENT_NO_WOKING_MAX_SECS, get_goat_network, get_network, goat_config_from_env,
+};
 use crate::rpc_service::current_time_secs;
 use crate::utils::{generate_instance_from_event, reflect_goat_address, strip_hex_prefix_owned};
 use bitvm2_lib::actors::Actor;
-use std::error::Error;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
 use store::localdb::{LocalDB, StorageProcessor, UpdateGraphParams};
@@ -33,7 +34,7 @@ pub async fn fetch_and_handle_block_range_events<'a>(
     event_entities: &[GatewayEventEntity],
     from_height: i64,
     to_height: i64,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let query_res = client
         .execute_query(&get_gateway_events_query(
             event_entities,
@@ -115,7 +116,7 @@ pub async fn fetch_and_handle_block_range_events<'a>(
         btc_client,
         bridge_in_request_events,
     )
-        .await?;
+    .await?;
     handle_committee_response_events(storage_processor, committee_response_events).await?;
     handle_bridge_in_events(storage_processor, bridge_in_events).await?;
     Ok(())
@@ -125,7 +126,7 @@ async fn handle_user_withdraw_events<'a>(
     storage_processor: &mut StorageProcessor<'a>,
     init_withdraw_events: Vec<InitWithdrawEvent>,
     cancel_withdraw_events: Vec<CancelWithdrawEvent>,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     let mut user_withdraw_events: Vec<UserGraphWithdrawEvent> =
         init_withdraw_events.into_iter().map(UserGraphWithdrawEvent::InitWithdraw).collect();
     let mut user_cancel_withdraw_events: Vec<UserGraphWithdrawEvent> =
@@ -171,7 +172,7 @@ async fn handle_proceed_withdraw_events<'a>(
     actor: Actor,
     storage_processor: &mut StorageProcessor<'a>,
     proceed_withdraw_events: Vec<ProceedWithdrawEvent>,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     let processing_status = if actor == Actor::Operator && env::get_proof_server_url().is_none() {
         GoatTxProcessingStatus::Pending.to_string()
     } else {
@@ -198,7 +199,7 @@ async fn handle_proceed_withdraw_events<'a>(
 async fn handle_withdraw_paths_events<'a>(
     storage_processor: &mut StorageProcessor<'a>,
     withdraw_paths_events: Vec<WithdrawPathsEvent>,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     for event in withdraw_paths_events {
         let reward_add: i64 = event.reward_amount_sats.parse::<i64>()?;
         let (flag, goat_addr) = reflect_goat_address(Some(event.operator_addr.clone()));
@@ -218,7 +219,7 @@ async fn handle_withdraw_paths_events<'a>(
 async fn handle_withdraw_disproved_events<'a>(
     storage_processor: &mut StorageProcessor<'a>,
     withdraw_disproved_events: Vec<WithdrawDisprovedEvent>,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     for event in withdraw_disproved_events {
         let challenger_reward_add: i64 = event.challenger_amount_sats.parse::<i64>()?;
         let disprover_reward_add: i64 = event.disprover_amount_sats.parse::<i64>()?;
@@ -254,7 +255,7 @@ async fn handle_bridge_in_request_events<'a>(
     actor: Actor,
     btc_client: &BTCClient,
     bridge_in_request_events: Vec<BridgeInRequestEvent>,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     let processing_status = if actor == Actor::Committee {
         GoatTxProcessingStatus::Pending.to_string()
     } else {
@@ -266,12 +267,12 @@ async fn handle_bridge_in_request_events<'a>(
             warn!("generate instance failed from event:{event:?}");
             continue;
         }
-        storage_processor.upsert_instance(instance_res.unwrap()).await?;
+        storage_processor.upsert_instance(&instance_res.unwrap()).await?;
         storage_processor
             .upsert_goat_tx_record(&GoatTxRecord {
                 instance_id: Uuid::from_str(&strip_hex_prefix_owned(&event.instance_id))?,
                 graph_id: Uuid::nil(),
-                tx_type: GoatTxType::ProceedWithdraw.to_string(),
+                tx_type: GoatTxType::BridgeInRequest.to_string(),
                 tx_hash: event.transaction_hash,
                 height: event.block_number.parse::<i64>()?,
                 is_local: false,
@@ -287,7 +288,7 @@ async fn handle_bridge_in_request_events<'a>(
 async fn handle_committee_response_events<'a>(
     storage_processor: &mut StorageProcessor<'a>,
     committee_response_events: Vec<CommitteeResponseEvent>,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     for event in committee_response_events {
         if let Ok(instance_id) = &Uuid::from_str(&event.instance_id) {
             storage_processor
@@ -307,7 +308,7 @@ async fn handle_committee_response_events<'a>(
 async fn handle_bridge_in_events<'a>(
     storage_processor: &mut StorageProcessor<'a>,
     bridge_in_events: Vec<BridgeInEvent>,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     for event in bridge_in_events {
         if let Ok(instance_id) = &Uuid::from_str(&event.instance_id) {
             storage_processor
@@ -362,7 +363,7 @@ pub async fn fetch_history_events(
                 watch_contract.from_height,
                 to_height,
             )
-                .await?;
+            .await?;
             info!(
                 "finish load history event from: {}, to: {to_height}",
                 watch_contract.from_height
@@ -411,23 +412,8 @@ pub async fn monitor_events(
     event_entities: Vec<GatewayEventEntity>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("start tick monitor_events");
-    let addr = env::get_goat_gateway_contract_from_env().to_string();
-    let current = current_time_secs();
     let mut storage_processor = local_db.acquire().await?;
-    let mut watch_contract =
-        if let Some(watch_contract) = storage_processor.get_watch_contract(&addr).await? {
-            watch_contract
-        } else {
-            WatchContract {
-                addr,
-                the_graph_url: env::get_goat_event_the_graph_url_from_env(),
-                gap: env::get_goat_event_filter_gap_from_env(),
-                from_height: env::get_goat_event_filter_from_from_env(),
-                status: WatchContractStatus::UnSync.to_string(),
-                extra: None,
-                updated_at: current,
-            }
-        };
+    let mut watch_contract = get_watch_contract(&mut storage_processor).await?;
     let query_client = GraphQueryClient::new(watch_contract.the_graph_url.clone());
     let current_finalized = goat_client.get_finalized_block_number().await?;
 
@@ -440,7 +426,8 @@ pub async fn monitor_events(
 
     if watch_contract.from_height + watch_contract.gap < current_finalized {
         if watch_contract.status == WatchContractStatus::Syncing.to_string()
-            && watch_contract.updated_at + LOAD_HISTORY_EVENT_NO_WOKING_MAX_SECS > current
+            && watch_contract.updated_at + LOAD_HISTORY_EVENT_NO_WOKING_MAX_SECS
+                > current_time_secs()
         {
             info!("Still in handle local event! will check later");
             return Ok(());
@@ -460,7 +447,7 @@ pub async fn monitor_events(
                 watch_contract_clone,
                 event_entities_clone,
             )
-                .await;
+            .await;
         });
         return Ok(());
     }
@@ -480,7 +467,7 @@ pub async fn monitor_events(
         watch_contract.from_height,
         to_height,
     )
-        .await?;
+    .await?;
     info!("finish monitor event from: {}, to: {to_height}", watch_contract.from_height);
     watch_contract.from_height = to_height + 1;
     watch_contract.updated_at = current_time_secs();
@@ -541,4 +528,34 @@ pub async fn run_watch_event_task(
             }
         }
     }
+}
+
+async fn get_watch_contract<'a>(
+    storage_processor: &mut StorageProcessor<'a>,
+) -> anyhow::Result<WatchContract> {
+    let addr = env::get_goat_gateway_contract_from_env().to_string();
+    if let Some(watch_contract) = storage_processor.get_watch_contract(&addr).await? {
+        Ok(watch_contract)
+    } else {
+        Ok(WatchContract {
+            addr,
+            the_graph_url: env::get_goat_event_the_graph_url_from_env(),
+            gap: env::get_goat_event_filter_gap_from_env(),
+            from_height: env::get_goat_event_filter_from_from_env(),
+            status: WatchContractStatus::UnSync.to_string(),
+            extra: None,
+            updated_at: current_time_secs(),
+        })
+    }
+}
+
+pub async fn is_processing_history_events(
+    local_db: &LocalDB,
+    goat_client: &GOATClient,
+) -> anyhow::Result<bool> {
+    let mut storage_processor = local_db.acquire().await?;
+    let current_finalized = goat_client.get_finalized_block_number().await?;
+    let watch_contract = get_watch_contract(&mut storage_processor).await?;
+    Ok(watch_contract.from_height + watch_contract.gap < current_finalized
+        || watch_contract.status == WatchContractStatus::Syncing.to_string())
 }

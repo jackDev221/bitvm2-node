@@ -1,47 +1,28 @@
-#![allow(dead_code)]
-
-use crate::action::{ChallengeSent, CreateInstance, DisproveSent, InstanceDiscarded};
-use crate::client::goat_chain::WithdrawStatus;
-
-use crate::client::{btc_chain::BTCClient, goat_chain::GOATClient};
-use crate::env::{
-    GRAPH_OPERATOR_DATA_UPLOAD_TIME_EXPIRED,
-    MESSAGE_BROADCAST_MAX_TIMES, MESSAGE_EXPIRE_TIME, MESSAGE_RESEND_INTERVAL_SECOND,
+use crate::action::{
+    AssertSent, ChallengeSent, DisproveSent, GOATMessage, GOATMessageContent, KickoffReady,
+    KickoffSent, Take1Ready, Take2Ready, send_to_peer,
 };
-use crate::rpc_service::{P2pUserData, UTXO};
+use crate::client::btc_chain::BTCClient;
+use crate::client::goat_chain::{GOATClient, WithdrawStatus};
+use crate::env::{MESSAGE_BROADCAST_MAX_TIMES, MESSAGE_RESEND_INTERVAL_SECOND, get_network};
+use crate::middleware::AllBehaviours;
 use crate::utils::{
-    create_goat_tx_record, finish_withdraw_disproved, get_graph,
-    obsolete_sibling_graphs, outpoint_spent_txid, update_graph_fields,
+    create_goat_tx_record, finish_withdraw_disproved, get_graph, obsolete_sibling_graphs,
+    outpoint_spent_txid, tx_on_chain, update_graph_fields,
 };
-use crate::{
-    action::{
-        AssertSent, GOATMessage, GOATMessageContent, KickoffReady, KickoffSent, Take1Ready,
-        Take2Ready, send_to_peer,
-    },
-    env::get_network,
-    middleware::AllBehaviours,
-    utils::tx_on_chain,
-};
-use alloy::primitives::TxHash;
 use bitcoin::Txid;
 use bitcoin::consensus::encode::{deserialize_hex, serialize_hex};
 use bitcoin::hashes::Hash;
 use bitvm2_lib::actors::Actor;
+use goat::constants::{CONNECTOR_3_TIMELOCK, CONNECTOR_4_TIMELOCK};
 use goat::transactions::assert::utils::COMMIT_TX_NUM;
-use goat::{
-    constants::{CONNECTOR_3_TIMELOCK, CONNECTOR_4_TIMELOCK},
-    utils::num_blocks_per_network,
-};
+use goat::utils::num_blocks_per_network;
 use libp2p::Swarm;
-
-use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
-use store::localdb::{LocalDB, UpdateGraphParams};
+use store::localdb::LocalDB;
 use store::{
-    GoatTxProcessingStatus, GoatTxType, GraphStatus, GraphTickActionMetaData,
-    InstanceStatus, MessageState, MessageType,
+    GoatTxProcessingStatus, GoatTxType, GraphStatus, GraphTickActionMetaData, MessageType,
 };
-
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -51,6 +32,7 @@ pub struct GraphTickActionData {
     pub graph_id: Uuid,
     pub graph_status: String,
     pub msg_times: i64,
+    #[allow(dead_code)]
     pub msg_type: String,
     pub kickoff_txid: Option<Txid>,
     pub take1_txid: Option<Txid>,
@@ -107,7 +89,13 @@ impl From<GraphTickActionMetaData> for GraphTickActionData {
     }
 }
 
-pub async fn get_relayer_caring_graph_data(
+fn is_need_to_send_msg(pre_send_times: i64, last_send_at: i64) -> bool {
+    // if msg never been sent, last_send_at value is 0
+    let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    (pre_send_times % MESSAGE_BROADCAST_MAX_TIMES != 0)
+        || (current_time - last_send_at) > MESSAGE_RESEND_INTERVAL_SECOND
+}
+async fn get_relayer_caring_graph_data(
     local_db: &LocalDB,
     status: GraphStatus,
     msg_type: String,
@@ -120,7 +108,7 @@ pub async fn get_relayer_caring_graph_data(
     Ok(meta_data.into_iter().map(|v| v.into()).collect())
 }
 
-pub async fn get_message_broadcast_times(
+async fn get_message_broadcast_times(
     local_db: &LocalDB,
     instance_id: &Uuid,
     graph_id: &Uuid,
@@ -130,7 +118,7 @@ pub async fn get_message_broadcast_times(
     Ok(storage_process.get_message_broadcast_times(instance_id, graph_id, msg_type).await?)
 }
 
-pub async fn add_message_broadcast_times(
+async fn add_message_broadcast_times(
     local_db: &LocalDB,
     instance_id: &Uuid,
     graph_id: &Uuid,
@@ -149,321 +137,6 @@ pub async fn get_initialized_graphs(
     // call L2 contract : getInitializedInstanceIds
     // returns Vec<(instance_id, graph_id)>
     Ok(goat_client.get_initialized_ids().await?)
-}
-
-pub async fn scan_bridge_in_prepare(
-    swarm: &mut Swarm<AllBehaviours>,
-    local_db: &LocalDB,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("start tick scan_bridge_in_prepare");
-    let mut storage_process = local_db.acquire().await?;
-    let current_time =
-        std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-    let messages = storage_process
-        .filter_type_messages(
-            MessageType::BridgeInData.to_string(),
-            MessageState::Pending.to_string(),
-            current_time - MESSAGE_EXPIRE_TIME,
-        )
-        .await?;
-
-    let mut ids = vec![];
-    info!("messages size :{}", messages.len());
-
-    for message in messages {
-        let p2p_data: P2pUserData = serde_json::from_slice(&message.content)?;
-        let message_content = GOATMessageContent::CreateInstance(CreateInstance {
-            instance_id: p2p_data.instance_id,
-            network: p2p_data.network,
-            depositor_evm_address: p2p_data.depositor_evm_address,
-            pegin_amount: p2p_data.pegin_amount,
-            user_inputs: p2p_data.user_inputs,
-        });
-        send_to_peer(swarm, GOATMessage::from_typed(Actor::Committee, &message_content)?)?;
-        ids.push(message.id)
-    }
-    info!("send msg:{:?} for create instances", ids);
-    storage_process
-        .update_messages_state(&ids, MessageState::Processed.to_string(), current_time)
-        .await?;
-
-    // TODO UPDAT
-    // let expired_num = storage_process
-    //     .update_expired_instance(
-    //         &BridgeInStatus::Submitted.to_string(),
-    //         &BridgeInStatus::PresignedFailed.to_string(),
-    //         current_time - INSTANCE_PRESIGNED_TIME_EXPIRED,
-    //     )
-    //     .await?;
-    // info!("Presigned expired instances is {expired_num}");
-
-    Ok(())
-}
-
-pub async fn scan_l1_broadcast_txs(
-    swarm: &mut Swarm<AllBehaviours>,
-    local_db: &LocalDB,
-    btc_client: &BTCClient,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting into scan_l1_broadcast_txs");
-    let mut storage_process = local_db.acquire().await?;
-    let (instances, _) = storage_process
-        .find_instances(None, Some(InstanceStatus::Presigned.to_string()), None, None, None)
-        .await?;
-
-    info!("Starting into scan_l1_broadcast_txs, need to check instance_size:{} ", instances.len());
-    let discarded_instances: Vec<Uuid> = vec![];
-    for instance in instances {
-        if instance.pegin_confirm_txid.is_none() {
-            warn!("instance:{}, pegin txid is none", instance.instance_id);
-            continue;
-        }
-        let tx_id = deserialize_hex(instance.pegin_confirm_txid.unwrap().as_str())?;
-        if tx_on_chain(btc_client, &tx_id).await? {
-            info!("scan_bridge_in: {} onchain ", tx_id.to_string());
-            let update_res = storage_process
-                .update_instance_status(
-                    &instance.instance_id,
-                    &InstanceStatus::L1Broadcasted.to_string(),
-                )
-                .await;
-            if let Err(err) = update_res {
-                warn!(
-                    "instance {} update state to L1Broadcasted failed err:{:?} ,will try latter",
-                    instance.instance_id, err
-                );
-                continue;
-            }
-        } else {
-            // TODO
-            info!("scan_l1_broadcast_txs: {} not onchain ", tx_id.to_string());
-            // if let Ok(is_discarded) = check_pegin_tx_input_status(
-            //     btc_client,
-            //     instance.instance_id,
-            //     instance.input_uxtos.clone(),
-            // )
-            // .await
-            //     && is_discarded
-            // {
-            //     discarded_instances.push(instance.instance_id);
-            // }
-        }
-    }
-    if !discarded_instances.is_empty() {
-        info!("update_l1_broadcast_txs: {} discarded instances", discarded_instances.len());
-        let mut tx = local_db.start_transaction().await?;
-        tx.update_instances_status_batch(
-            &InstanceStatus::Discarded.to_string(),
-            &discarded_instances,
-        )
-        .await?;
-        tx.update_graphs_status_by_instance_ids(
-            &GraphStatus::Discarded.to_string(),
-            &discarded_instances,
-        )
-        .await?;
-        for instance_id in discarded_instances.iter() {
-            tx.add_message_broadcast_times(
-                instance_id,
-                &Uuid::nil(),
-                &MessageType::InstanceDiscarded.to_string(),
-                1,
-            )
-            .await?
-        }
-        let graph_infos =
-            tx.get_graphs_ids_and_operator_by_instance_ids(&discarded_instances).await?;
-        let message_content =
-            GOATMessageContent::InstanceDiscarded(InstanceDiscarded { graph_infos });
-        send_to_peer(swarm, GOATMessage::from_typed(Actor::Operator, &message_content)?)?;
-        tx.commit().await?;
-    }
-    Ok(())
-}
-
-pub async fn check_pegin_tx_input_status(
-    btc_client: &BTCClient,
-    instance_id: Uuid,
-    input_uxtos: String,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    info!("check_pegin_tx_input_status for instance:{instance_id}");
-    let utxos: Vec<UTXO> = serde_json::from_str(&input_uxtos)?;
-    let mut input_utxo_used = false;
-    for utxo in utxos {
-        if outpoint_spent_txid(btc_client, &Txid::from_str(&utxo.txid)?, utxo.vout as u64)
-            .await?
-            .is_some()
-        {
-            info!(
-                "check_pegin_tx_input_status for instance:{instance_id} input txid {} has been used",
-                utxo.txid
-            );
-            input_utxo_used = true;
-            break;
-        }
-    }
-    Ok(input_utxo_used)
-}
-
-pub async fn scan_post_pegin_data(
-    _swarm: &mut Swarm<AllBehaviours>,
-    local_db: &LocalDB,
-    btc_client: &BTCClient,
-    goat_client: &GOATClient,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // scan bridge-in tx & relay to L2 contract: postPeginData & postOperatorData
-    info!("Starting into post_pegin_data");
-    let mut storage_process = local_db.acquire().await?;
-    let (instances, _) = storage_process
-        .find_instances(None, Some(InstanceStatus::L1Broadcasted.to_string()), None, None, None)
-        .await?;
-
-    info!("Starting into scan post_pegin_data, need to send instance_size:{} ", instances.len());
-    for instance in instances {
-        if instance.pegin_confirm_txid.is_none() {
-            warn!(
-                "scan post_pegin_data instance:{}, pegin confirm txid is none",
-                instance.instance_id
-            );
-            continue;
-        }
-        if let Ok(_tx_hash) = TxHash::from_str(&instance.pegin_data_txid) {
-            let receipt_op = goat_client.get_tx_receipt(&instance.pegin_data_txid).await?;
-            if receipt_op.is_none() {
-                info!(
-                    "scan post_pegin_data, instance_id: {}, goat_tx:{} finish send to chain \
-                but get receipt status is false, will try later",
-                    instance.instance_id, instance.pegin_data_txid
-                );
-                continue;
-            }
-            storage_process
-                .update_instance_status(
-                    &instance.instance_id,
-                    &InstanceStatus::L2Minted.to_string(),
-                )
-                .await?;
-        } else {
-            let pegin_confirm_tx = btc_client
-                .fetch_btc_tx(&deserialize_hex(&instance.pegin_confirm_txid.unwrap())?)
-                .await?;
-            match goat_client
-                .post_pegin_data(btc_client, &instance.instance_id, &pegin_confirm_tx)
-                .await
-            {
-                Err(err) => {
-                    warn!(
-                        "scan post_pegin_data instance id {}, tx:{} post_pegin_data failed err:{:?}",
-                        instance.instance_id,
-                        pegin_confirm_tx.compute_txid().to_string(),
-                        err
-                    );
-                    continue;
-                }
-                Ok(tx_hash) => {
-                    info!(
-                        "scan post_pegin_data finish post post_pegin_dataa for instance_id {} , tx hash:{}",
-                        instance.instance_id, tx_hash
-                    );
-
-                    create_goat_tx_record(
-                        local_db,
-                        goat_client,
-                        Uuid::default(),
-                        instance.instance_id,
-                        &tx_hash,
-                        GoatTxType::PostPeginData,
-                        GoatTxProcessingStatus::Skipped.to_string(),
-                    )
-                    .await?;
-
-                    storage_process
-                        .update_instance_pegin_data_txid(&instance.instance_id, &tx_hash)
-                        .await?;
-                }
-            };
-        }
-    }
-    Ok(())
-}
-
-pub async fn scan_post_operator_data(
-    _swarm: &mut Swarm<AllBehaviours>,
-    local_db: &LocalDB,
-    goat_client: &GOATClient,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting into scan post_operator_data");
-    let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-    let mut storage_process = local_db.acquire().await?;
-    let (instances, _) = storage_process
-        .find_instances(
-            None,
-            Some(InstanceStatus::L2Minted.to_string()),
-            Some(current_time - GRAPH_OPERATOR_DATA_UPLOAD_TIME_EXPIRED),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-    info!("scan post_operator_data check instance size: {}", instances.len());
-    for instance in instances {
-        let graphs = storage_process.get_graph_by_instance_id(&instance.instance_id).await?;
-        if graphs.is_empty() {
-            warn!(
-                " scan post_operator_data instance {}, status is L2Minted, but graph is none",
-                instance.instance_id
-            );
-            continue;
-        }
-        for graph in graphs {
-            if graph.status != GraphStatus::CommitteePresigned.to_string() {
-                continue;
-            }
-            // TODO update
-            match goat_client
-                .post_operate_data(&instance.instance_id, &graph.graph_id, &graph, &[])
-                .await
-            {
-                Ok(tx_hash) => {
-                    info!(
-                        "scan post_operator_data finish post operate data for instance_id {}, graph_id:{} , tx hash:{}",
-                        instance.instance_id, graph.graph_id, tx_hash
-                    );
-
-                    create_goat_tx_record(
-                        local_db,
-                        goat_client,
-                        graph.graph_id,
-                        instance.instance_id,
-                        &tx_hash,
-                        GoatTxType::PostOperatorData,
-                        GoatTxProcessingStatus::Skipped.to_string(),
-                    )
-                    .await?;
-
-                    storage_process
-                        .update_graph_fields(UpdateGraphParams {
-                            graph_id: graph.graph_id,
-                            status: Some(GraphStatus::OperatorDataPushed.to_string()),
-                            ipfs_base_url: None,
-                            challenge_txid: None,
-                            disprove_txid: None,
-                            bridge_out_start_at: None,
-                            init_withdraw_txid: None,
-                        })
-                        .await?
-                }
-                Err(err) => {
-                    warn!(
-                        "scan post_operator_data {} postOperatorData failed :err :{:?}",
-                        graph.graph_id, err
-                    )
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 // tick_task1
@@ -1115,54 +788,4 @@ pub async fn scan_take2(
         }
     }
     Ok(())
-}
-
-pub async fn do_tick_action(
-    swarm: &mut Swarm<AllBehaviours>,
-    local_db: &LocalDB,
-    btc_client: &BTCClient,
-    goat_client: &GOATClient,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(err) = scan_bridge_in_prepare(swarm, local_db).await {
-        warn!("scan_bridge_in_prepare, err {:?}", err)
-    }
-
-    if let Err(err) = scan_l1_broadcast_txs(swarm, local_db, btc_client).await {
-        warn!("scan_l1_broadcast_txs, err {:?}", err)
-    }
-    if let Err(err) = scan_post_pegin_data(swarm, local_db, btc_client, goat_client).await {
-        warn!("scan_post_pegin_data, err {:?}", err)
-    }
-
-    if let Err(err) = scan_post_operator_data(swarm, local_db, goat_client).await {
-        warn!("scan_post_operator_data, err {:?}", err)
-    }
-
-    if let Err(err) = scan_withdraw(swarm, local_db, goat_client, btc_client).await {
-        warn!("scan_withdraw, err {:?}", err)
-    }
-
-    if let Err(err) = scan_kickoff(swarm, local_db, btc_client, goat_client).await {
-        warn!("scan_kickoff, err {:?}", err)
-    }
-
-    if let Err(err) = scan_assert(swarm, local_db, btc_client).await {
-        warn!("scan_assert, err {:?}", err)
-    }
-
-    if let Err(err) = scan_take1(swarm, local_db, btc_client, goat_client).await {
-        warn!("scan_take1, err {:?}", err)
-    }
-
-    if let Err(err) = scan_take2(swarm, local_db, btc_client, goat_client).await {
-        warn!("scan_take2, err {:?}", err)
-    }
-    Ok(())
-}
-
-fn is_need_to_send_msg(pre_send_times: i64, last_send_at: i64) -> bool {
-    // if msg never been sent, last_send_at value is 0
-    let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-    (pre_send_times % MESSAGE_BROADCAST_MAX_TIMES != 0)
-        || (current_time - last_send_at) > MESSAGE_RESEND_INTERVAL_SECOND
 }

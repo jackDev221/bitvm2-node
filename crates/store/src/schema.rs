@@ -49,11 +49,6 @@ pub enum InstanceStatus {
     RelayerL2MintedFailed,
     Timeout,      // time to cancle bridgein
     UserCanceled, // user broadcast Pegin-cancel tx
-
-    L1Broadcasted,  // TODO remvo
-    L2Minted,       // TODO remove
-    L2MintedFailed, // TODO remove
-    Discarded,      // Pegin tx utxo has been spent
 }
 
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
@@ -536,6 +531,9 @@ pub struct WatchContract {
 pub enum GoatTxType {
     #[default]
     Normal,
+    BridgeInRequest,
+    CommitteeAnswer,
+    BridgeIn,
     PostPeginData,
     PostOperatorData,
     InitWithdraw,
@@ -603,7 +601,10 @@ mod tests {
 
     #[test]
     fn test_bridge_in_status_from_str() {
-        assert_eq!(InstanceStatus::from_str("L2Minted").unwrap(), InstanceStatus::L2Minted);
+        assert_eq!(
+            InstanceStatus::from_str("RelayerL2Minted").unwrap(),
+            InstanceStatus::RelayerL2Minted
+        );
         assert!(InstanceStatus::from_str("Invalid").is_err());
     }
 

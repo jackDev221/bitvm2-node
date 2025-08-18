@@ -5,7 +5,7 @@ pub mod env;
 pub mod metrics_service;
 pub mod middleware;
 pub mod p2p_msg_handler;
-pub mod relayer_action;
+
 pub mod rpc_service;
 mod scheduled_tasks;
 pub mod tests;

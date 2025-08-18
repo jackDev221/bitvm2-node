@@ -355,3 +355,13 @@ pub fn get_rpc_support_actors() -> Vec<Actor> {
 pub fn get_proof_server_url() -> Option<String> {
     std::env::var(ENV_PROOF_SEVER_URL).ok()
 }
+
+/// TODO update
+pub fn get_pub_key_of_goat_chain() -> [u8; 32] {
+    [0_u8; 32]
+}
+
+/// TODO update
+pub fn get_min_committee_number() -> u32 {
+    0
+}

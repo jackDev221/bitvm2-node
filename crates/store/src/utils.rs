@@ -64,6 +64,53 @@ impl QueryBuilder {
         }
     }
 
+    /// Add WHERE condition with IN clause
+    ///
+    /// Parameters:
+    /// - field: The field name to check
+    /// - values: Vector of values to check against
+    /// - not_in: If true, use NOT IN instead of IN
+    pub fn and_where_in(&mut self, field: &str, values: &[String], not_in: bool) {
+        if values.is_empty() {
+            return;
+        }
+
+        let clause = if self.sql.contains("WHERE") { "AND" } else { "WHERE" };
+        let operator = if not_in { "NOT IN" } else { "IN" };
+        let placeholders = create_place_holders(values);
+
+        self.sql.push_str(&format!(" {clause} {field} {operator} ({placeholders})"));
+
+        // Add all values as parameters
+        for value in values {
+            self.params.push(QueryParam::Text(value.clone()));
+        }
+    }
+
+    /// Add WHERE condition with IN clause for integer values
+    ///
+    /// Parameters:
+    /// - field: The field name to check
+    /// - values: Vector of integer values to check against
+    /// - not_in: If true, use NOT IN instead of IN
+    #[allow(dead_code)]
+    pub fn and_where_in_int(&mut self, field: &str, values: &[i64], not_in: bool) {
+        if values.is_empty() {
+            return;
+        }
+
+        let clause = if self.sql.contains("WHERE") { "AND" } else { "WHERE" };
+        let operator = if not_in { "NOT IN" } else { "IN" };
+        let placeholders = create_place_holders(values);
+
+        self.sql.push_str(&format!(" {clause} {field} {operator} ({placeholders})"));
+
+        // Add all values as parameters
+        for value in values {
+            self.params.push(QueryParam::Int(*value));
+        }
+    }
+
     #[allow(dead_code)]
     pub fn add_raw_condition(&mut self, condition: &str) {
         let clause = if self.sql.contains("WHERE") { "AND" } else { "WHERE" };
@@ -83,4 +130,11 @@ impl QueryBuilder {
             self.sql.push_str(&format!(" OFFSET {offset}"));
         }
     }
+}
+
+/// Create placeholders for SQL IN clause
+///
+/// Creates a string of placeholders like "$1,$2,$3" for use in SQL IN clauses
+pub fn create_place_holders<T>(inputs: &[T]) -> String {
+    inputs.iter().enumerate().map(|(i, _)| format!("${}", i + 1)).collect::<Vec<_>>().join(",")
 }

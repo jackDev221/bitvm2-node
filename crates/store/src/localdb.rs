@@ -1,6 +1,6 @@
 use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
-use crate::utils::{QueryBuilder, QueryParam};
+use crate::utils::{QueryBuilder, QueryParam, create_place_holders};
 use crate::{
     COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, Graph, GraphFullData, GraphTickActionMetaData, Instance,
     Message, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofInfo, ProofType,
@@ -96,6 +96,59 @@ pub struct FilterGraphParams {
     pub is_init_withdraw_not_null: bool,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct InstanceQuery {
+    pub from_addr: Option<String>,
+    pub statuses: Vec<String>,
+    pub earliest_updated: Option<i64>,
+    pub pegin_request_height_threshold: Option<i64>,
+    pub offset: Option<u32>,
+    pub limit: Option<u32>,
+}
+
+impl InstanceQuery {
+    pub fn with_from_addr(mut self, from_addr: String) -> Self {
+        self.from_addr = Some(from_addr);
+        self
+    }
+
+    pub fn with_status(mut self, status: String) -> Self {
+        self.statuses.push(status);
+        self
+    }
+
+    pub fn with_statuses(mut self, statuses: Vec<String>) -> Self {
+        self.statuses = statuses;
+        self
+    }
+
+    pub fn with_earliest_updated(mut self, earliest_updated: i64) -> Self {
+        self.earliest_updated = Some(earliest_updated);
+        self
+    }
+
+    pub fn with_pegin_request_height_threshold(mut self, threshold: i64) -> Self {
+        self.pegin_request_height_threshold = Some(threshold);
+        self
+    }
+
+    pub fn with_pagination(mut self, offset: u32, limit: u32) -> Self {
+        self.offset = Some(offset);
+        self.limit = Some(limit);
+        self
+    }
+
+    pub fn with_offset(mut self, offset: u32) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    pub fn with_limit(mut self, limit: u32) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct UpdateGraphParams {
     pub graph_id: Uuid,
@@ -140,7 +193,7 @@ impl<'a> StorageProcessor<'a> {
     /// - Ok(true) if the operation affected at least one row
     /// - Ok(false) if no rows were affected
     /// - Err if the operation failed
-    pub async fn upsert_instance(&mut self, instance: Instance) -> anyhow::Result<bool> {
+    pub async fn upsert_instance(&mut self, instance: &Instance) -> anyhow::Result<bool> {
         let committees_answers_json = serde_json::to_string(&instance.committees_answers)?;
         let res = sqlx::query!(
             "INSERT OR
@@ -218,11 +271,7 @@ impl<'a> StorageProcessor<'a> {
     /// and pagination support. Uses QueryBuilder for dynamic query construction.
     ///
     /// Parameters:
-    /// - from_addr: Optional filter by source address
-    /// - status: Optional filter by instance status
-    /// - earliest_updated: Optional timestamp filter for instances updated after this time
-    /// - offset: Optional pagination offset (number of records to skip)
-    /// - limit: Optional pagination limit (maximum number of records to return)
+    /// - params: InstanceQuery containing all filter criteria and pagination options
     ///
     /// Returns:
     /// - Ok((instances, total_count)) where instances is a vector of matching instances
@@ -230,11 +279,7 @@ impl<'a> StorageProcessor<'a> {
     /// - Err if the query failed
     pub async fn find_instances(
         &mut self,
-        from_addr: Option<String>,
-        status: Option<String>,
-        earliest_updated: Option<i64>,
-        offset: Option<u32>,
-        limit: Option<u32>,
+        params: InstanceQuery,
     ) -> anyhow::Result<(Vec<Instance>, i64)> {
         let mut instances_query_builder = QueryBuilder::new(
             "SELECT instance_id,
@@ -260,39 +305,60 @@ impl<'a> StorageProcessor<'a> {
 
         let mut count_query_builder =
             QueryBuilder::new("SELECT count(*) as total_instances FROM instance");
-        if let Some(from_addr) = from_addr {
+
+        // Apply filters
+        if let Some(from_addr) = &params.from_addr {
             instances_query_builder
                 .and_where("from_addr = ?", Some(QueryParam::Text(from_addr.clone())));
             count_query_builder
                 .and_where("from_addr = ?", Some(QueryParam::Text(from_addr.clone())));
         }
-        if let Some(status) = status {
-            instances_query_builder.and_where("status = ?", Some(QueryParam::Text(status.clone())));
-            count_query_builder.and_where("status = ?", Some(QueryParam::Text(status.clone())));
+        if !params.statuses.is_empty() {
+            instances_query_builder.and_where_in("status", &params.statuses, false);
+            count_query_builder.and_where_in("status", &params.statuses, false);
         }
-        if let Some(earliest_updated) = earliest_updated {
+        if let Some(earliest_updated) = params.earliest_updated {
             instances_query_builder
                 .and_where("updated_at >= ?", Some(QueryParam::Int(earliest_updated)));
             count_query_builder
                 .and_where("updated_at >= ?", Some(QueryParam::Int(earliest_updated)));
         }
+        if let Some(pegin_request_height_threshold) = params.pegin_request_height_threshold {
+            instances_query_builder.and_where(
+                "pegin_request_height < ?",
+                Some(QueryParam::Int(pegin_request_height_threshold)),
+            );
+            count_query_builder.and_where(
+                "pegin_request_height < ?",
+                Some(QueryParam::Int(pegin_request_height_threshold)),
+            );
+        }
+
+        // Apply ordering and pagination
         instances_query_builder.apply_order("created_at DESC");
         count_query_builder.apply_order("created_at DESC");
-        instances_query_builder.apply_pagination(limit, offset);
+        instances_query_builder.apply_pagination(params.limit, params.offset);
+
+        // Execute data query
         let sql = instances_query_builder.get_sql();
-        let params = instances_query_builder.get_params();
-        let mut data_query = sqlx::query_as::<_, Instance>(sql.as_str());
-        for param in &params {
+        let query_params = instances_query_builder.get_params();
+        let mut data_query = sqlx::query_as::<_, Instance>(&sql);
+
+        // Bind parameters for data query
+        for param in &query_params {
             data_query = match param {
                 QueryParam::Text(s) => data_query.bind(s),
                 QueryParam::Int(i) => data_query.bind(i),
             };
         }
 
+        // Execute count query
         let count_sql = count_query_builder.get_sql();
-        let count_params = count_query_builder.get_params();
-        let mut count_query = sqlx::query(count_sql.as_str());
-        for param in &count_params {
+        let count_query_params = count_query_builder.get_params();
+        let mut count_query = sqlx::query(&count_sql);
+
+        // Bind parameters for count query
+        for param in &count_query_params {
             count_query = match param {
                 QueryParam::Text(s) => count_query.bind(s),
                 QueryParam::Int(i) => count_query.bind(i),
@@ -305,7 +371,6 @@ impl<'a> StorageProcessor<'a> {
 
         Ok((instances, total_instances))
     }
-
     /// Get network type by instance ID
     ///
     /// Retrieves the network type (e.g., "mainnet", "testnet") for a specific instance.
@@ -477,12 +542,9 @@ impl<'a> StorageProcessor<'a> {
 
     /// Update instance fields using builder pattern
     ///
-    /// This is the most elegant update method, using the InstanceUpdateParams builder pattern
+    /// This is the most elegant update method, using the InstanceUpdate builder pattern
     /// Provides type safety and clear API
-    pub async fn update_instance_with_params(
-        &mut self,
-        params: &InstanceUpdateParams,
-    ) -> anyhow::Result<bool> {
+    pub async fn update_instance(&mut self, params: &InstanceUpdate) -> anyhow::Result<bool> {
         if !params.has_updates() {
             return Ok(false);
         }
@@ -2735,7 +2797,7 @@ impl<'a> StorageProcessor<'a> {
         Ok(tx_info_rows.into_iter().map(|v| (v.graph_id, v.tx_hash, v.zkm_version)).collect())
     }
 
-    pub async fn update_goat_tx_record_prove_status(
+    pub async fn update_goat_tx_record_processing_status(
         &mut self,
         graph_id: &Uuid,
         instance_id: &Uuid,
@@ -2892,10 +2954,6 @@ impl<'a> StorageProcessor<'a> {
     }
 }
 
-fn create_place_holders<T>(inputs: &[T]) -> String {
-    inputs.iter().enumerate().map(|(i, _)| format!("${}", i + 1)).collect::<Vec<_>>().join(",")
-}
-
 fn truncate_string(s: &str, max_len: usize) -> &str {
     if s.len() > max_len { &s[..max_len] } else { s }
 }
@@ -2904,7 +2962,7 @@ fn truncate_string(s: &str, max_len: usize) -> &str {
 ///
 /// Provides a more elegant way to specify which instance fields to update
 #[derive(Debug, Clone)]
-pub struct InstanceUpdateParams {
+pub struct InstanceUpdate {
     pub instance_id: Uuid,
     pub status: Option<String>,
     pub pegin_confirm_txid: Option<String>,
@@ -2913,7 +2971,7 @@ pub struct InstanceUpdateParams {
     pub committees_answers: Option<HashMap<String, String>>,
 }
 
-impl InstanceUpdateParams {
+impl InstanceUpdate {
     /// Create new update parameters
     pub fn new(instance_id: Uuid) -> Self {
         Self {

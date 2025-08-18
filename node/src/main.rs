@@ -13,11 +13,10 @@ use std::sync::{Arc, Mutex};
 use store::ipfs::IPFS;
 use tracing_subscriber::EnvFilter;
 
-use bitvm2_noded::{rpc_service, run_watch_event_task};
 use bitvm2_noded::utils::{
-    self, generate_local_key, save_local_info,
-    set_node_external_socket_addr_env,
+    self, generate_local_key, save_local_info, set_node_external_socket_addr_env,
 };
+use bitvm2_noded::{rpc_service, run_watch_event_task};
 
 use anyhow::Result;
 use bitvm2_noded::middleware::swarm::{Bitvm2SwarmConfig, BitvmNetworkManager};

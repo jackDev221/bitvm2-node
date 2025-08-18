@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::str::FromStr;
 use std::sync::Arc;
-use store::localdb::FilterGraphParams;
+use store::localdb::{FilterGraphParams, InstanceQuery};
 use store::{GoatTxType, GraphFullData, GraphStatus, InstanceStatus, modify_graph_status};
 use uuid::Uuid;
 
@@ -373,7 +373,7 @@ pub async fn create_instance(
 ) -> (StatusCode, Json<InstanceUpdateResponse>) {
     let async_fn = || async move {
         let mut storage_process = app_state.local_db.acquire().await?;
-        storage_process.upsert_instance(payload.instance).await?;
+        storage_process.upsert_instance(&payload.instance).await?;
         Ok::<(), Box<dyn std::error::Error>>(())
     };
     match async_fn().await {
@@ -451,7 +451,7 @@ pub async fn update_instance(
 
     let async_fn = || async move {
         let mut storage_process = app_state.local_db.acquire().await?;
-        storage_process.upsert_instance(payload.instance).await?;
+        storage_process.upsert_instance(&payload.instance).await?;
         Ok::<(), Box<dyn std::error::Error>>(())
     };
     match async_fn().await {
@@ -527,9 +527,15 @@ pub async fn get_instances(
 ) -> (StatusCode, Json<InstanceListResponse>) {
     let async_fn = || async move {
         let mut storage_process = app_state.local_db.acquire().await?;
-        let (instances, total) = storage_process
-            .find_instances(params.from_addr, None, None, params.offset, params.limit)
-            .await?;
+        let mut query = InstanceQuery::default();
+        if let Some(from_addr) = params.from_addr {
+            query = query.with_from_addr(from_addr);
+        }
+        if let (Some(offset), Some(limit)) = (params.offset, params.limit) {
+            query = query.with_pagination(offset, limit);
+        }
+
+        let (instances, total) = storage_process.find_instances(query).await?;
 
         if instances.is_empty() {
             tracing::warn!("get_instances instance is empty: total {}", total);
@@ -684,8 +690,8 @@ pub async fn get_instances_overview(
         let mut storage_process = app_state.local_db.acquire().await?;
         let (pegin_sum, pegin_count) = storage_process
             .get_sum_bridge_in(&[
-                InstanceStatus::L1Broadcasted.to_string(),
-                InstanceStatus::L2Minted.to_string(),
+                InstanceStatus::RelayerL1Broadcasted.to_string(),
+                InstanceStatus::RelayerL2Minted.to_string(),
             ])
             .await?;
         let (pegout_sum, pegout_count) = storage_process
