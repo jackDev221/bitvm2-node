@@ -35,6 +35,13 @@ pub struct NodesOverview {
     pub offline_relayer: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct InstanceSignatures {
+    pub pubkey: String,
+    pub l1_sig: Option<String>,
+    pub l2_sig: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Display, EnumString)]
 pub enum InstanceStatus {
     #[default]
@@ -67,7 +74,7 @@ pub struct Instance {
     pub pegin_cancel_txid: Option<String>,
     pub unsign_pegin_confirm_tx: Option<String>,
     #[sqlx(json)]
-    pub committees_answers: HashMap<String, String>,
+    pub committees_answers: HashMap<String, InstanceSignatures>,
     pub pegin_data_txid: String,
     pub timeout: i64,
     pub created_at: i64,

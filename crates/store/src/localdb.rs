@@ -3,8 +3,8 @@ use crate::schema::NODE_STATUS_ONLINE;
 use crate::utils::{QueryBuilder, QueryParam, create_place_holders};
 use crate::{
     COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, Graph, GraphFullData, GraphTickActionMetaData, Instance,
-    Message, Node, NodesOverview, NonceCollect, NonceCollectMetaData, ProofInfo, ProofType,
-    PubKeyCollect, PubKeyCollectMetaData, WatchContract,
+    InstanceSignatures, Message, Node, NodesOverview, NonceCollect, NonceCollectMetaData,
+    ProofInfo, ProofType, PubKeyCollect, PubKeyCollectMetaData, WatchContract,
 };
 
 use sqlx::migrate::Migrator;
@@ -622,52 +622,6 @@ impl<'a> StorageProcessor<'a> {
         Ok(())
     }
 
-    /// Update instance committees answers
-    ///
-    /// Updates the committees_answers field for a specific instance.
-    /// The committees_answers field stores a JSON string representing a HashMap<String, String>
-    /// where the key is the committee name and the value is the committee signature.
-    ///
-    /// Parameters:
-    /// - instance_id: The UUID of the instance to update
-    /// - committees: Array of committee names (keys)
-    /// - committee_signs: Array of committee signatures (values)
-    ///
-    /// Note: committees and committee_signs arrays must have the same length.
-    pub async fn update_instance_committees_answers(
-        &mut self,
-        instance_id: &Uuid,
-        committees: &[String],
-        committee_signs: &[String],
-    ) -> anyhow::Result<bool> {
-        // Validate that arrays have the same length
-        if committees.len() != committee_signs.len() {
-            return Err(anyhow::anyhow!(
-                "committees and committee_signs arrays must have the same length"
-            ));
-        }
-
-        // Create HashMap from the arrays
-        let mut committees_answers = HashMap::new();
-        for (committee, sign) in committees.iter().zip(committee_signs) {
-            committees_answers.insert(committee.clone(), sign.clone());
-        }
-
-        let current_time = get_current_timestamp_secs();
-        let committees_answers_json = serde_json::to_string(&committees_answers)?;
-
-        let result = sqlx::query!(
-            "UPDATE instance SET committees_answers = ?, updated_at = ? WHERE instance_id = ?",
-            committees_answers_json,
-            current_time,
-            instance_id
-        )
-        .execute(self.conn())
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
     /// Add or update a single committee answer for an instance
     ///
     /// This method allows adding or updating a single committee's answer
@@ -675,8 +629,10 @@ impl<'a> StorageProcessor<'a> {
     pub async fn update_instance_committee_answer(
         &mut self,
         instance_id: &Uuid,
-        committee: &str,
-        committee_sign: &str,
+        committee_addr: &str,
+        pubkey: &str,
+        l1_sig: Option<String>,
+        l2_sig: Option<String>,
     ) -> anyhow::Result<bool> {
         // First, get the current committees_answers
         let current_instance = self.find_instance(instance_id).await?;
@@ -685,16 +641,19 @@ impl<'a> StorageProcessor<'a> {
         }
 
         let mut committees_answers = current_instance.unwrap().committees_answers;
-
-        // Add or update the committee answer
-        committees_answers.insert(committee.to_string(), committee_sign.to_string());
-
-        // Convert HashMap to arrays for the new method signature
-        let committees: Vec<String> = committees_answers.keys().cloned().collect();
-        let committee_signs: Vec<String> = committees_answers.values().cloned().collect();
-
-        // Update the instance with the new committees_answers
-        self.update_instance_committees_answers(instance_id, &committees, &committee_signs).await
+        committees_answers
+            .entry(committee_addr.to_string())
+            .and_modify(|existing| {
+                existing.pubkey = pubkey.to_string();
+                if l1_sig.is_some() {
+                    existing.l1_sig = l1_sig.clone();
+                }
+                if l2_sig.is_some() {
+                    existing.l2_sig = l2_sig.clone();
+                }
+            })
+            .or_insert_with(|| InstanceSignatures { pubkey: pubkey.to_string(), l1_sig, l2_sig });
+        self.update_instance_committees_answers_map(instance_id, &committees_answers).await
     }
 
     /// Remove a committee answer from an instance
@@ -710,18 +669,11 @@ impl<'a> StorageProcessor<'a> {
         if current_instance.is_none() {
             return Ok(false);
         }
-
         let mut committees_answers = current_instance.unwrap().committees_answers;
-
         // Remove the committee answer
         committees_answers.remove(committee);
-
-        // Convert HashMap to arrays for the new method signature
-        let committees: Vec<String> = committees_answers.keys().cloned().collect();
-        let committee_signs: Vec<String> = committees_answers.values().cloned().collect();
-
         // Update the instance with the new committees_answers
-        self.update_instance_committees_answers(instance_id, &committees, &committee_signs).await
+        self.update_instance_committees_answers_map(instance_id, &committees_answers).await
     }
 
     /// Get committees answers for an instance
@@ -730,7 +682,7 @@ impl<'a> StorageProcessor<'a> {
     pub async fn get_instance_committees_answers(
         &mut self,
         instance_id: &Uuid,
-    ) -> anyhow::Result<Option<HashMap<String, String>>> {
+    ) -> anyhow::Result<Option<HashMap<String, InstanceSignatures>>> {
         let current_instance = self.find_instance(instance_id).await?;
         if let Some(instance) = current_instance {
             Ok(Some(instance.committees_answers))
@@ -746,12 +698,21 @@ impl<'a> StorageProcessor<'a> {
     pub async fn update_instance_committees_answers_map(
         &mut self,
         instance_id: &Uuid,
-        committees_answers: &HashMap<String, String>,
+        committees_answers: &HashMap<String, InstanceSignatures>,
     ) -> anyhow::Result<bool> {
-        let committees: Vec<String> = committees_answers.keys().cloned().collect();
-        let committee_signs: Vec<String> = committees_answers.values().cloned().collect();
+        let current_time = get_current_timestamp_secs();
+        let committees_answers_json = serde_json::to_string(&committees_answers)?;
 
-        self.update_instance_committees_answers(instance_id, &committees, &committee_signs).await
+        let result = sqlx::query!(
+            "UPDATE instance SET committees_answers = ?, updated_at = ? WHERE instance_id = ?",
+            committees_answers_json,
+            current_time,
+            instance_id
+        )
+        .execute(self.conn())
+        .await?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn update_graph_fields(&mut self, params: UpdateGraphParams) -> anyhow::Result<()> {

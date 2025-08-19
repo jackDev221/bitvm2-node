@@ -6,12 +6,14 @@ use crate::middleware::AllBehaviours;
 use crate::rpc_service::current_time_secs;
 use crate::utils::create_goat_tx_record;
 use alloy::primitives::TxHash;
+use anyhow::anyhow;
 use bitcoin::consensus::encode::deserialize_hex;
+use bitvm2_lib::keys::CommitteeMasterKey;
 use libp2p::Swarm;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use store::localdb::{InstanceQuery, LocalDB, StorageProcessor, UpdateGraphParams};
-use store::{GoatTxProcessingStatus, GoatTxType, GraphStatus, InstanceStatus};
+use store::{GoatTxProcessingStatus, GoatTxType, GraphStatus, InstanceSignatures, InstanceStatus};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -60,8 +62,14 @@ pub async fn instance_answers_monitor(
                 .await?;
             continue;
         }
+
+        let master_key =
+            CommitteeMasterKey::new(env::get_bitvm_key().map_err(|e| anyhow!("{}", e))?);
+        let (x_o_pubkey, _) =
+            master_key.keypair_for_instance(tx_record.instance_id).x_only_public_key();
+
         match goat_client
-            .answer_pegin_request(&tx_record.instance_id, &env::get_pub_key_of_goat_chain())
+            .answer_pegin_request(&tx_record.instance_id, &x_o_pubkey.serialize())
             .await
         {
             Ok(tx_hash) => {
@@ -106,7 +114,17 @@ pub async fn instance_window_expiration_monitor(
                 for (committee, pubkey) in
                     pegin_data.committee_addresses.iter().zip(pegin_data.committee_pubkeys)
                 {
-                    instance.committees_answers.insert(committee.to_string(), hex::encode(pubkey));
+                    instance
+                        .committees_answers
+                        .entry(committee.to_string())
+                        .and_modify(|existing| {
+                            existing.pubkey = hex::encode(pubkey);
+                        })
+                        .or_insert_with(|| InstanceSignatures {
+                            pubkey: hex::encode(pubkey),
+                            l1_sig: None,
+                            l2_sig: None,
+                        });
                 }
 
                 if env::get_min_committee_number() <= instance.committees_answers.len() as u32 {
