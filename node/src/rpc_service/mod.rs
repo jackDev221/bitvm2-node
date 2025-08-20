@@ -4,7 +4,6 @@ pub mod handler;
 mod node;
 pub(crate) mod proof;
 pub mod routes;
-pub use bitvm2::UTXO;
 
 use crate::client::btc_chain::BTCClient;
 use crate::env::get_network;
@@ -21,7 +20,6 @@ use axum::{
     Router, middleware,
     routing::{get, post},
 };
-pub use bitvm2::P2pUserData;
 use bitvm2_lib::actors::Actor;
 use http::{HeaderMap, Method, StatusCode};
 use http_body_util::BodyExt;

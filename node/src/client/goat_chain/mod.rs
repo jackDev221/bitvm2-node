@@ -26,6 +26,7 @@ mod chain_adaptor;
 mod evmchain;
 mod goat_adaptor;
 mod mock_goat_adaptor;
+pub use chain_adaptor::Utxo;
 
 impl GOATClient {
     pub fn new(goat_init_config: GoatInitConfig, goat_network: GoatNetwork) -> Self {

@@ -362,6 +362,54 @@ pub async fn get_graph_txn(
 /// }
 /// ```
 ///
+/// Create new bridge instance
+///
+/// Create a new bridge instance for handling Bitcoin to Layer 2 asset transfers.
+/// This endpoint is used to initialize a new pegin (bridge-in) process.
+///
+/// # Request Body
+///
+/// Contains complete instance information wrapped in an InstanceUpdateRequest.
+/// The instance should include all required fields for a new bridge operation.
+///
+/// # Returns
+///
+/// - `200 OK`: Successfully created instance
+/// - `500 Internal Server Error`: Server internal error or database operation failed
+///
+/// # Example
+///
+/// ```http
+/// POST /v1/instances
+/// Content-Type: application/json
+///
+/// {
+///   "instance": {
+///     "instance_id": "123e4567-e89b-12d3-a456-426614174000",
+///     "network": "testnet",
+///     "from_addr": "tb1q...",
+///     "to_addr": "0x...",
+///     "amount": 20000,
+///     "fee": 1000,
+///     "status": "UserInited",
+///     "pegin_request_txid": "0x...",
+///     "pegin_request_height": 123456,
+///     "user_xonly_pubkey": [241,77,222,197,156,70,127,106,169,155,155,10,242,194,183,203,19,29,8,122,11,205,201,232,191,12,70,128,82,184,61,74],
+///     "user_change_addr": "tb1q...",
+///     "user_refund_addr": "tb1q...",
+///     "pegin_prepare_txid": null,
+///     "pegin_confirm_txid": null,
+///     "pegin_cancel_txid": null,
+///     "unsign_pegin_confirm_tx": null,
+///     "committees_answers": {},
+///     "pegin_data_txid": "",
+///     "timeout": 3600,
+///     "created_at": 1640995200,
+///     "updated_at": 1640995200
+///   }
+/// }
+/// ```
+///
 /// Response example:
 /// ```json
 /// {}
@@ -387,21 +435,23 @@ pub async fn create_instance(
 
 /// Update existing bridge instance
 ///
-/// Update information for a specified instance, including status, transaction IDs, and other fields.
+/// Update information for a specified bridge instance, including status, transaction IDs, and other fields.
+/// This endpoint is used to update the state of an existing pegin (bridge-in) process.
 ///
 /// # Parameters
 ///
-/// - `instance_id`: Instance ID (UUID format)
+/// - `instance_id`: Instance ID (UUID format) - must match the instance_id in the request body
 ///
 /// # Request Body
 ///
 /// Contains complete instance information wrapped in an InstanceUpdateRequest.
+/// All fields will be updated with the provided values.
 ///
 /// # Returns
 ///
 /// - `200 OK`: Successfully updated instance
 /// - `400 Bad Request`: Instance ID in path doesn't match the one in request body
-/// - `500 Internal Server Error`: Server internal error
+/// - `500 Internal Server Error`: Server internal error or database operation failed
 ///
 /// # Example
 ///
@@ -420,12 +470,14 @@ pub async fn create_instance(
 ///     "status": "Presigned",
 ///     "pegin_request_txid": "0x...",
 ///     "pegin_request_height": 123456,
+///     "user_xonly_pubkey": [241,77,222,197,156,70,127,106,169,155,155,10,242,194,183,203,19,29,8,122,11,205,201,232,191,12,70,128,82,184,61,74],
+///     "user_change_addr": "tb1q...",
+///     "user_refund_addr": "tb1q...",
 ///     "pegin_prepare_txid": "18f553006e17b0adc291a75f48e77687cdd58e0049bb4a976d69e5358ba3f59b",
 ///     "pegin_confirm_txid": null,
 ///     "pegin_cancel_txid": null,
 ///     "unsign_pegin_confirm_tx": null,
-///     "committees_sigs": [],
-///     "committees": [],
+///     "committees_answers": {},
 ///     "pegin_data_txid": "",
 ///     "timeout": 3600,
 ///     "created_at": 1640995200,

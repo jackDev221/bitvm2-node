@@ -1654,8 +1654,8 @@ pub async fn operator_scan_ready_proof(
             // storage_proccessor
             //     .update_goat_tx_proved_state_by_height(
             //         &tx.tx_type,
-            //         &GoatTxProveStatus::Pending.to_string(),
-            //         &GoatTxProveStatus::Failed.to_string(),
+            //         &GoatTxProcessingStatus::Pending.to_string(),
+            //         &GoatTxProcessingStatus::Failed.to_string(),
             //         tx.height,
             //     )
             //     .await?;
