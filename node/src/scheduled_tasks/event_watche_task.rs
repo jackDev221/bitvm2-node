@@ -290,12 +290,12 @@ async fn handle_committee_response_events<'a>(
     committee_response_events: Vec<CommitteeResponseEvent>,
 ) -> anyhow::Result<()> {
     for event in committee_response_events {
-        if let Ok(instance_id) = &Uuid::from_str(&event.instance_id) {
+        if let Ok(instance_id) = &Uuid::from_str(&strip_hex_prefix_owned(&event.instance_id)) {
             storage_processor
                 .update_instance_committee_answer(
                     instance_id,
                     &event.committee_address,
-                    &event.pubkey,
+                    &event.committee_xonly_pubkey,
                     None,
                     None,
                 )
@@ -312,7 +312,7 @@ async fn handle_bridge_in_events<'a>(
     bridge_in_events: Vec<BridgeInEvent>,
 ) -> anyhow::Result<()> {
     for event in bridge_in_events {
-        if let Ok(instance_id) = &Uuid::from_str(&event.instance_id) {
+        if let Ok(instance_id) = &Uuid::from_str(&strip_hex_prefix_owned(&event.instance_id)) {
             storage_processor
                 .update_instance_status(instance_id, &InstanceStatus::RelayerL2Minted.to_string())
                 .await?;

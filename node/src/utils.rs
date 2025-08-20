@@ -46,6 +46,7 @@ use rand::Rng;
 use secp256k1::Secp256k1;
 use statics::*;
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Write};
 use std::net::SocketAddr;
@@ -56,8 +57,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
 use store::localdb::{InstanceUpdate, LocalDB, UpdateGraphParams};
 use store::{
-    GoatTxProceedWithdrawExtra, GoatTxProcessingStatus, GoatTxRecord, GoatTxType, Graph,
-    GraphStatus, Instance, InstanceStatus, Message, MessageState, MessageType, Node,
+    ByteArray32, GoatTxProceedWithdrawExtra, GoatTxProcessingStatus, GoatTxRecord, GoatTxType,
+    Graph, GraphStatus, Instance, InstanceStatus, Message, MessageState, MessageType, Node,
 };
 use stun_client::{Attribute, Class, Client};
 
@@ -1685,8 +1686,14 @@ pub async fn generate_instance_from_event(
     event: &BridgeInRequestEvent,
 ) -> anyhow::Result<Instance> {
     // TODO decode event to get from_addr unsign_pegin_confirm_tx pegin_prepare_txid pegin_cancel_txid, timeout
+
+    let user_xonly_pubkey_bytes = hex::decode(strip_hex_prefix_owned(&event.user_xonly_pubkey))?;
+    let user_xonly_pubkey_array: [u8; 32] = user_xonly_pubkey_bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("user_x_only_pubkey must be exactly 32 bytes"))?;
+
     let instance = Instance {
-        instance_id: Uuid::from_str(&event.instance_id)?,
+        instance_id: Uuid::from_str(&strip_hex_prefix_owned(&event.instance_id))?,
         network: get_network().to_string(),
         from_addr: "".to_string(),
         to_addr: EvmAddress::from_str(&event.depositor_address)?.to_string(),
@@ -1695,13 +1702,18 @@ pub async fn generate_instance_from_event(
         status: InstanceStatus::UserInited.to_string(),
         pegin_request_txid: event.transaction_hash.clone(),
         pegin_request_height: event.block_number.parse()?,
+        user_xonly_pubkey: ByteArray32(user_xonly_pubkey_array),
+        user_change_addr: event.user_change_address.clone(),
+        user_refund_addr: event.user_refund_address.clone(),
         pegin_prepare_txid: None,
+        pegin_confirm_txid: None,
         pegin_cancel_txid: None,
         unsign_pegin_confirm_tx: None,
+        committees_answers: HashMap::new(),
+        pegin_data_txid: "".to_string(),
         timeout: 0,
         created_at: current_time_secs(),
         updated_at: current_time_secs(),
-        ..Default::default()
     };
     Ok(instance)
 }

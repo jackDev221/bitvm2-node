@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+// use base64::prelude::*;
 use std::collections::HashMap;
 use std::str::FromStr;
 use strum::{Display, EnumString};
@@ -8,6 +9,66 @@ use uuid::Uuid;
 pub const NODE_STATUS_ONLINE: &str = "Online";
 pub const NODE_STATUS_OFFLINE: &str = "Offline";
 pub const COMMITTEE_PRE_SIGN_NUM: usize = 5;
+
+macro_rules! define_byte_array {
+    ($name:ident, $size:expr) => {
+        #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+        pub struct $name(pub [u8; $size]);
+
+        impl TryFrom<String> for $name {
+            type Error = sqlx::Error;
+
+            fn try_from(value: String) -> Result<Self, Self::Error> {
+                let bytes = hex::decode(value).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
+                if bytes.len() != $size {
+                    return Err(sqlx::Error::Decode(
+                        format!("Expected {} bytes, got {}", $size, bytes.len()).into(),
+                    ));
+                }
+
+                let mut array = [0u8; $size];
+                array.copy_from_slice(&bytes);
+                Ok($name(array))
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(value: $name) -> String {
+                hex::encode(value.0)
+            }
+        }
+
+        impl sqlx::Type<sqlx::Sqlite> for $name {
+            fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
+                <String as sqlx::Type<sqlx::Sqlite>>::type_info()
+            }
+        }
+
+        impl sqlx::Encode<'_, sqlx::Sqlite> for $name {
+            fn encode_by_ref(
+                &self,
+                args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'_>>,
+            ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync>> {
+                let hex_string = hex::encode(self.0);
+                <String as sqlx::Encode<sqlx::Sqlite>>::encode_by_ref(&hex_string, args)
+            }
+        }
+
+        impl sqlx::Decode<'_, sqlx::Sqlite> for $name {
+            fn decode(
+                value: sqlx::sqlite::SqliteValueRef<'_>,
+            ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+                let string = <String as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+                string
+                    .try_into()
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+            }
+        }
+    };
+}
+
+define_byte_array!(ByteArray32, 32);
 
 #[derive(Clone, FromRow, Debug, Serialize, Deserialize, Default)]
 pub struct Node {
@@ -69,6 +130,9 @@ pub struct Instance {
     pub status: String,
     pub pegin_request_txid: String,
     pub pegin_request_height: i64,
+    pub user_xonly_pubkey: ByteArray32,
+    pub user_change_addr: String,
+    pub user_refund_addr: String,
     pub pegin_prepare_txid: Option<String>,
     pub pegin_confirm_txid: Option<String>,
     pub pegin_cancel_txid: Option<String>,

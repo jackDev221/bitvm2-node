@@ -198,9 +198,9 @@ impl<'a> StorageProcessor<'a> {
         let res = sqlx::query!(
             "INSERT OR
             REPLACE INTO instance (instance_id, network, from_addr, to_addr, amount, fee,  status, pegin_request_txid, pegin_request_height,
-                       pegin_prepare_txid, pegin_confirm_txid, pegin_cancel_txid, unsign_pegin_confirm_tx, committees_answers,
+                        user_xonly_pubkey, user_change_addr, user_refund_addr, pegin_prepare_txid, pegin_confirm_txid, pegin_cancel_txid, unsign_pegin_confirm_tx, committees_answers,
                        pegin_data_txid, timeout,  created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)",
             instance.instance_id,
             instance.network,
             instance.from_addr,
@@ -210,6 +210,9 @@ impl<'a> StorageProcessor<'a> {
             instance.status,
             instance.pegin_request_txid,
             instance.pegin_request_height,
+            instance.user_xonly_pubkey,
+            instance.user_change_addr,
+            instance.user_refund_addr,
             instance.pegin_prepare_txid,
             instance.pegin_confirm_txid,
             instance.pegin_cancel_txid,
@@ -247,6 +250,9 @@ impl<'a> StorageProcessor<'a> {
                          status,
                          pegin_request_txid,
                          pegin_request_height,
+                         user_xonly_pubkey,
+                         user_change_addr,
+                         user_refund_addr,
                          pegin_prepare_txid,
                          pegin_confirm_txid,
                          pegin_cancel_txid,
@@ -291,6 +297,9 @@ impl<'a> StorageProcessor<'a> {
                     status,
                     pegin_request_txid,
                     pegin_request_height,
+                    user_xonly_pubkey,
+                    user_change_addr,
+                    user_refund_addr
                     pegin_prepare_txid,
                     pegin_confirm_txid,
                     pegin_cancel_txid,
