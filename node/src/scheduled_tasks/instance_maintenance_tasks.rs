@@ -65,11 +65,11 @@ pub async fn instance_answers_monitor(
 
         let master_key =
             CommitteeMasterKey::new(env::get_bitvm_key().map_err(|e| anyhow!("{}", e))?);
-        let (x_o_pubkey, _) =
+        let (xonly_pubkey, _) =
             master_key.keypair_for_instance(tx_record.instance_id).x_only_public_key();
 
         match goat_client
-            .answer_pegin_request(&tx_record.instance_id, &x_o_pubkey.serialize())
+            .answer_pegin_request(&tx_record.instance_id, &xonly_pubkey.serialize())
             .await
         {
             Ok(tx_hash) => {
@@ -112,7 +112,7 @@ pub async fn instance_window_expiration_monitor(
         match goat_client.get_pegin_data(&instance.instance_id).await {
             Ok(pegin_data) => {
                 for (committee, pubkey) in
-                    pegin_data.committee_addresses.iter().zip(pegin_data.committee_pubkeys)
+                    pegin_data.committee_addresses.iter().zip(pegin_data.committee_xonly_pubkeys)
                 {
                     instance
                         .committees_answers
@@ -379,7 +379,7 @@ pub async fn scan_post_graph_data(
             }
             // TODO update
             match goat_client
-                .post_operate_data(&instance.instance_id, &graph.graph_id, &graph, &[])
+                .post_graph_data(&instance.instance_id, &graph.graph_id, &graph, &[])
                 .await
             {
                 Ok(tx_hash) => {
