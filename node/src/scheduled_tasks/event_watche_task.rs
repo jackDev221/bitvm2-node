@@ -291,15 +291,29 @@ async fn handle_committee_response_events<'a>(
 ) -> anyhow::Result<()> {
     for event in committee_response_events {
         if let Ok(instance_id) = &Uuid::from_str(&strip_hex_prefix_owned(&event.instance_id)) {
-            storage_processor
-                .update_instance_committee_answer(
-                    instance_id,
-                    &event.committee_address,
-                    &event.committee_xonly_pubkey,
-                    None,
-                    None,
-                )
-                .await?;
+            // Convert hex string to [u8; 32]
+            if let Ok(pubkey_bytes) = hex::decode(&event.committee_xonly_pubkey) {
+                if pubkey_bytes.len() == 32 {
+                    let mut pubkey = [0u8; 32];
+                    pubkey.copy_from_slice(&pubkey_bytes);
+                    storage_processor
+                        .update_instance_committee_answer(
+                            instance_id,
+                            &event.committee_address,
+                            &pubkey,
+                            None,
+                            None,
+                        )
+                        .await?;
+                } else {
+                    warn!(
+                        "committee_xonly_pubkey length is not 32 bytes: {}",
+                        event.committee_xonly_pubkey
+                    );
+                }
+            } else {
+                warn!("failed to decode committee_xonly_pubkey: {}", event.committee_xonly_pubkey);
+            }
         } else {
             warn!("failed to parse instance id:{event:?}");
         }

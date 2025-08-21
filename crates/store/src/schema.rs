@@ -97,8 +97,8 @@ pub struct NodesOverview {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub struct InstanceSignatures {
-    pub pubkey: String,
+pub struct CommitteeSignatures {
+    pub xonly_pubkey: [u8; 32],
     pub l1_sig: Option<String>,
     pub l2_sig: Option<String>,
 }
@@ -138,7 +138,7 @@ pub struct Instance {
     pub pegin_cancel_txid: Option<String>,
     pub unsign_pegin_confirm_tx: Option<String>,
     #[sqlx(json)]
-    pub committees_answers: HashMap<String, InstanceSignatures>,
+    pub committees_answers: HashMap<String, CommitteeSignatures>,
     pub pegin_data_txid: String,
     pub timeout: i64,
     pub created_at: i64,

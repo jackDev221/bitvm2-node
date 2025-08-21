@@ -13,7 +13,7 @@ use libp2p::Swarm;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use store::localdb::{InstanceQuery, LocalDB, StorageProcessor, UpdateGraphParams};
-use store::{GoatTxProcessingStatus, GoatTxType, GraphStatus, InstanceSignatures, InstanceStatus};
+use store::{CommitteeSignatures, GoatTxProcessingStatus, GoatTxType, GraphStatus, InstanceStatus};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -111,17 +111,17 @@ pub async fn instance_window_expiration_monitor(
     for mut instance in instances {
         match goat_client.get_pegin_data(&instance.instance_id).await {
             Ok(pegin_data) => {
-                for (committee, pubkey) in
+                for (committee_addr, xonly_pubkey) in
                     pegin_data.committee_addresses.iter().zip(pegin_data.committee_xonly_pubkeys)
                 {
                     instance
                         .committees_answers
-                        .entry(committee.to_string())
+                        .entry(committee_addr.to_string())
                         .and_modify(|existing| {
-                            existing.pubkey = hex::encode(pubkey);
+                            existing.xonly_pubkey = xonly_pubkey;
                         })
-                        .or_insert_with(|| InstanceSignatures {
-                            pubkey: hex::encode(pubkey),
+                        .or_insert_with(|| CommitteeSignatures {
+                            xonly_pubkey,
                             l1_sig: None,
                             l2_sig: None,
                         });

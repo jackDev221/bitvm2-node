@@ -2,9 +2,10 @@ use crate::schema::NODE_STATUS_OFFLINE;
 use crate::schema::NODE_STATUS_ONLINE;
 use crate::utils::{QueryBuilder, QueryParam, create_place_holders};
 use crate::{
-    COMMITTEE_PRE_SIGN_NUM, GoatTxRecord, Graph, GraphFullData, GraphTickActionMetaData, Instance,
-    InstanceSignatures, Message, Node, NodesOverview, NonceCollect, NonceCollectMetaData,
-    ProofInfo, ProofType, PubKeyCollect, PubKeyCollectMetaData, WatchContract,
+    COMMITTEE_PRE_SIGN_NUM, CommitteeSignatures, GoatTxRecord, Graph, GraphFullData,
+    GraphTickActionMetaData, Instance, Message, Node, NodesOverview, NonceCollect,
+    NonceCollectMetaData, ProofInfo, ProofType, PubKeyCollect, PubKeyCollectMetaData,
+    WatchContract,
 };
 
 use sqlx::migrate::Migrator;
@@ -639,7 +640,7 @@ impl<'a> StorageProcessor<'a> {
         &mut self,
         instance_id: &Uuid,
         committee_addr: &str,
-        pubkey: &str,
+        xonly_pubkey: &[u8; 32],
         l1_sig: Option<String>,
         l2_sig: Option<String>,
     ) -> anyhow::Result<bool> {
@@ -653,7 +654,7 @@ impl<'a> StorageProcessor<'a> {
         committees_answers
             .entry(committee_addr.to_string())
             .and_modify(|existing| {
-                existing.pubkey = pubkey.to_string();
+                existing.xonly_pubkey = *xonly_pubkey;
                 if l1_sig.is_some() {
                     existing.l1_sig = l1_sig.clone();
                 }
@@ -661,7 +662,7 @@ impl<'a> StorageProcessor<'a> {
                     existing.l2_sig = l2_sig.clone();
                 }
             })
-            .or_insert_with(|| InstanceSignatures { pubkey: pubkey.to_string(), l1_sig, l2_sig });
+            .or_insert_with(|| CommitteeSignatures { xonly_pubkey: *xonly_pubkey, l1_sig, l2_sig });
         self.update_instance_committees_answers_map(instance_id, &committees_answers).await
     }
 
@@ -691,7 +692,7 @@ impl<'a> StorageProcessor<'a> {
     pub async fn get_instance_committees_answers(
         &mut self,
         instance_id: &Uuid,
-    ) -> anyhow::Result<Option<HashMap<String, InstanceSignatures>>> {
+    ) -> anyhow::Result<Option<HashMap<String, CommitteeSignatures>>> {
         let current_instance = self.find_instance(instance_id).await?;
         if let Some(instance) = current_instance {
             Ok(Some(instance.committees_answers))
@@ -707,7 +708,7 @@ impl<'a> StorageProcessor<'a> {
     pub async fn update_instance_committees_answers_map(
         &mut self,
         instance_id: &Uuid,
-        committees_answers: &HashMap<String, InstanceSignatures>,
+        committees_answers: &HashMap<String, CommitteeSignatures>,
     ) -> anyhow::Result<bool> {
         let current_time = get_current_timestamp_secs();
         let committees_answers_json = serde_json::to_string(&committees_answers)?;
@@ -2938,7 +2939,7 @@ pub struct InstanceUpdate {
     pub pegin_confirm_txid: Option<String>,
     pub pegin_confirm_fee: Option<i64>,
     pub pegin_data_txid: Option<String>,
-    pub committees_answers: Option<HashMap<String, String>>,
+    pub committees_answers: Option<HashMap<String, CommitteeSignatures>>,
 }
 
 impl InstanceUpdate {
@@ -2974,7 +2975,10 @@ impl InstanceUpdate {
     }
 
     /// Set committees answers
-    pub fn with_committees_answers(mut self, committees_answers: HashMap<String, String>) -> Self {
+    pub fn with_committees_answers(
+        mut self,
+        committees_answers: HashMap<String, CommitteeSignatures>,
+    ) -> Self {
         self.committees_answers = Some(committees_answers);
         self
     }
