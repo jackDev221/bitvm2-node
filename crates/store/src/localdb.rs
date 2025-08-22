@@ -198,7 +198,7 @@ impl<'a> StorageProcessor<'a> {
         let committees_answers_json = serde_json::to_string(&instance.committees_answers)?;
         let res = sqlx::query!(
             "INSERT OR
-            REPLACE INTO instance (instance_id, network, from_addr, to_addr, amount, fee,  status, pegin_request_txid, pegin_request_height,
+            REPLACE INTO instance (instance_id, network, from_addr, to_addr, amount, fees,  status, pegin_request_txid, pegin_request_height,
                         user_xonly_pubkey, user_change_addr, user_refund_addr, pegin_prepare_txid, pegin_confirm_txid, pegin_cancel_txid, unsign_pegin_confirm_tx, committees_answers,
                        pegin_data_txid, timeout,  created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)",
@@ -207,7 +207,7 @@ impl<'a> StorageProcessor<'a> {
             instance.from_addr,
             instance.to_addr,
             instance.amount,
-            instance.fee,
+            instance.fees,
             instance.status,
             instance.pegin_request_txid,
             instance.pegin_request_height,
@@ -247,7 +247,7 @@ impl<'a> StorageProcessor<'a> {
                          from_addr,
                          to_addr,
                          amount,
-                         fee,
+                         fees,
                          status,
                          pegin_request_txid,
                          pegin_request_height,
@@ -294,7 +294,7 @@ impl<'a> StorageProcessor<'a> {
                     from_addr,
                     to_addr,
                     amount,
-                    fee,
+                    fees,
                     status,
                     pegin_request_txid,
                     pegin_request_height,
@@ -513,13 +513,11 @@ impl<'a> StorageProcessor<'a> {
         &mut self,
         instance_id: &Uuid,
         pegin_confirm_txid: &str,
-        fee: i64,
     ) -> anyhow::Result<bool> {
         let current_time = get_current_timestamp_secs();
         let result = sqlx::query!(
-            "UPDATE instance SET pegin_confirm_txid = ?, fee = ?, updated_at = ? WHERE instance_id = ?",
+            "UPDATE instance SET pegin_confirm_txid = ?, updated_at = ? WHERE instance_id = ?",
             pegin_confirm_txid,
-            fee,
             current_time,
             instance_id
         )
@@ -569,10 +567,6 @@ impl<'a> StorageProcessor<'a> {
 
         if let Some(ref txid) = params.pegin_confirm_txid {
             query_builder.set_field("pegin_confirm_txid", QueryParam::Text(txid.clone()));
-        }
-
-        if let Some(fee) = params.pegin_confirm_fee {
-            query_builder.set_field("fee", QueryParam::Int(fee));
         }
 
         if let Some(ref txid) = params.pegin_data_txid {
@@ -2937,7 +2931,6 @@ pub struct InstanceUpdate {
     pub instance_id: Uuid,
     pub status: Option<String>,
     pub pegin_confirm_txid: Option<String>,
-    pub pegin_confirm_fee: Option<i64>,
     pub pegin_data_txid: Option<String>,
     pub committees_answers: Option<HashMap<String, CommitteeSignatures>>,
 }
@@ -2949,7 +2942,6 @@ impl InstanceUpdate {
             instance_id,
             status: None,
             pegin_confirm_txid: None,
-            pegin_confirm_fee: None,
             pegin_data_txid: None,
             committees_answers: None,
         }
@@ -2962,9 +2954,8 @@ impl InstanceUpdate {
     }
 
     /// Set pegin confirmation information
-    pub fn with_pegin_confirm(mut self, txid: String, fee: i64) -> Self {
+    pub fn with_pegin_confirm(mut self, txid: String, _fee: i64) -> Self {
         self.pegin_confirm_txid = Some(txid);
-        self.pegin_confirm_fee = Some(fee);
         self
     }
 
@@ -2987,7 +2978,6 @@ impl InstanceUpdate {
     pub fn has_updates(&self) -> bool {
         self.status.is_some()
             || self.pegin_confirm_txid.is_some()
-            || self.pegin_confirm_fee.is_some()
             || self.pegin_data_txid.is_some()
             || self.committees_answers.is_some()
     }

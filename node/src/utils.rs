@@ -58,7 +58,8 @@ use store::ipfs::IPFS;
 use store::localdb::{InstanceUpdate, LocalDB, UpdateGraphParams};
 use store::{
     ByteArray32, GoatTxProceedWithdrawExtra, GoatTxProcessingStatus, GoatTxRecord, GoatTxType,
-    Graph, GraphStatus, Instance, InstanceStatus, Message, MessageState, MessageType, Node,
+    Graph, GraphStatus, Instance, InstanceStatus, Int64Array3, Message, MessageState, MessageType,
+    Node,
 };
 use stun_client::{Attribute, Class, Client};
 
@@ -1698,7 +1699,7 @@ pub async fn generate_instance_from_event(
         from_addr: "".to_string(),
         to_addr: EvmAddress::from_str(&event.depositor_address)?.to_string(),
         amount: event.pegin_amount_sats.parse()?,
-        fee: event.txn_fees[2].parse()?,
+        fees: Int64Array3(event.txn_fees.clone().map(|v| v.parse::<i64>().unwrap_or_default())),
         status: InstanceStatus::UserInited.to_string(),
         pegin_request_txid: event.transaction_hash.clone(),
         pegin_request_height: event.block_number.parse()?,
