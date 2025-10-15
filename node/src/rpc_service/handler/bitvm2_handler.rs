@@ -722,7 +722,7 @@ pub async fn get_instances(
         if let Some(from_addr) = params.from_addr {
             query = query.with_from_addr(from_addr);
         }
-        query = query.with_pagination(offset, limit);
+        query = query.with_pagination(offset, limit).with_order("created_at DESC".to_string());
 
         let (instances, total) = storage_process.find_instances(query).await?;
 

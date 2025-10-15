@@ -109,6 +109,7 @@ pub async fn instance_window_expiration_monitor(
                 InstanceQuery::default()
                     .with_status(InstanceStatus::UserInited.to_string())
                     .with_pegin_request_height_threshold(current_height - window_blocks)
+                    .with_order("created_at DESC".to_string())
                     .with_offset(0)
                     .with_limit(MAX_INSTANCE),
             )
@@ -283,6 +284,7 @@ pub async fn instance_expiration_monitor(
             .find_instances(
                 InstanceQuery::default()
                     .with_status(InstanceStatus::PresignedFailed.to_string())
+                    .with_order("created_at DESC".to_string())
                     .with_offset(0)
                     .with_limit(MAX_INSTANCE),
             )
@@ -324,6 +326,7 @@ pub async fn instance_btc_tx_monitor(
                         InstanceStatus::Timeout.to_string(),
                     ])
                     .with_offset(0)
+                    .with_order("created_at DESC".to_string())
                     .with_limit(MAX_INSTANCE),
             )
             .await?
@@ -414,6 +417,7 @@ pub async fn scan_post_graph_data(
         .find_instances(
             InstanceQuery::default()
                 .with_statuses(vec![InstanceStatus::RelayerL2Minted.to_string()])
+                .with_order("created_at DESC".to_string())
                 .with_earliest_updated(current_time - GRAPH_OPERATOR_DATA_UPLOAD_TIME_EXPIRED),
         )
         .await

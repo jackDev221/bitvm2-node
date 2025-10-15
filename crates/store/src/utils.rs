@@ -133,6 +133,53 @@ impl QueryBuilder {
             self.sql.push_str(&format!(" OFFSET {offset}"));
         }
     }
+
+    pub fn query<'q, DB>(
+        self,
+        mut query: sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments<'q>>,
+    ) -> sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments<'q>>
+    where
+        DB: sqlx::Database,
+        for<'a> &'a str: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+        for<'a> String: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+        for<'a> i64: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+        for<'a> SerializableTxid: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+        for<'a> u32: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+    {
+        // Bind parameters for query
+        for param in self.params {
+            query = match param {
+                QueryParam::Text(s) => query.bind(s),
+                QueryParam::Int(i) => query.bind(i),
+                QueryParam::BTCTxid(btc_txid) => query.bind(btc_txid),
+            };
+        }
+        query
+    }
+
+    pub fn query_as<'q, DB, O>(
+        self,
+        mut query: sqlx::query::QueryAs<'q, DB, O, <DB as sqlx::Database>::Arguments<'q>>,
+    ) -> sqlx::query::QueryAs<'q, DB, O, <DB as sqlx::Database>::Arguments<'q>>
+    where
+        DB: sqlx::Database,
+        O: Send + Unpin,
+        for<'a> &'a str: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+        for<'a> String: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+        for<'a> i64: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+        for<'a> SerializableTxid: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+        for<'a> u32: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+    {
+        // Bind parameters for query
+        for param in self.params {
+            query = match param {
+                QueryParam::Text(s) => query.bind(s),
+                QueryParam::Int(i) => query.bind(i),
+                QueryParam::BTCTxid(btc_txid) => query.bind(btc_txid),
+            };
+        }
+        query
+    }
 }
 
 /// Create placeholders for SQL IN clause

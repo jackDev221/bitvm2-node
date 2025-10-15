@@ -54,7 +54,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use store::ipfs::IPFS;
-use store::localdb::{GraphUpdate, InstanceUpdate, LocalDB, StorageProcessor};
+use store::localdb::{GraphQuery, GraphUpdate, InstanceUpdate, LocalDB, StorageProcessor};
 use store::{
     ByteArray32, GoatTxProceedWithdrawExtra, GoatTxProcessingStatus, GoatTxRecord, GoatTxType,
     Graph, GraphRawData, GraphStatus, Instance, InstanceStatus, Message, MessageState, Node,
@@ -2103,12 +2103,10 @@ pub async fn get_current_prekickoff_tx(
     let mut storage_processor = local_db.acquire().await?;
     let graphs = storage_processor
         .get_operator_graphs(
-            &operator_pubkey.to_string(),
-            None,
-            vec![],
-            Some("kickoff_index DESC".to_string()),
-            None,
-            Some(1),
+            GraphQuery::default()
+                .with_operator_pubkey(operator_pubkey.to_string())
+                .with_order("kickoff_index DESC".to_string())
+                .with_limit(1),
         )
         .await?;
 
@@ -2329,12 +2327,11 @@ pub async fn get_latest_pegout_finalized_graph(
     let mut storage_processor = local_db.acquire().await?;
     let graphs = storage_processor
         .get_operator_graphs(
-            &operator_pubkey.to_string(),
-            None,
-            statuses,
-            Some("kickoff_index DESC".to_string()),
-            None,
-            Some(1),
+            GraphQuery::default()
+                .with_operator_pubkey(operator_pubkey.to_string())
+                .with_statuses(statuses)
+                .with_order("kickoff_index DESC".to_string())
+                .with_limit(1),
         )
         .await?;
     if graphs.is_empty() {
@@ -2353,12 +2350,11 @@ pub async fn get_graph_id_by_nonce(
     let mut storage_processor = local_db.acquire().await?;
     let graphs = storage_processor
         .get_operator_graphs(
-            &operator_pubkey.to_string(),
-            Some(graph_nonce as i64),
-            vec![],
-            Some("kickoff_index DESC".to_string()),
-            None,
-            Some(1),
+            GraphQuery::default()
+                .with_operator_pubkey(operator_pubkey.to_string())
+                .with_kickoff_index(graph_nonce as i64)
+                .with_order("kickoff_index DESC".to_string())
+                .with_limit(1),
         )
         .await?;
     if graphs.is_empty() { Ok(None) } else { Ok(Some((graphs[0].instance_id, graphs[0].graph_id))) }

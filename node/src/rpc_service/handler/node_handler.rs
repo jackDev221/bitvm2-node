@@ -12,6 +12,7 @@ use bitvm2_lib::actors::Actor;
 use http::StatusCode;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
+use store::localdb::NodeQuery;
 use store::{NODE_STATUS_OFFLINE, NODE_STATUS_ONLINE, Node};
 
 /// Create or update node information
@@ -173,14 +174,15 @@ pub async fn get_nodes(
             None
         };
         let (nodes, total) = storage_process
-            .node_list(
+            .find_nodes(&NodeQuery {
                 actor,
                 goat_addr,
-                Some(offset),
-                Some(limit),
                 time_threshold,
-                query_params.status,
-            )
+                status_expect: query_params.status,
+                order: None,
+                offset: Some(offset),
+                limit: Some(limit),
+            })
             .await?;
         let node_desc_list: Vec<NodeDesc> = nodes
             .into_iter()
