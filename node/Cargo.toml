@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "sequencer-set-publish"
 path = "src/bin/sequencer-set-publish.rs"
 
+[[bin]]
+name = "event_tool"
+path = "src/bin/event_tool.rs"
+
 [dependencies]
 libp2p = { workspace = true, features = [
     "autonat",
