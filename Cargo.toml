@@ -149,7 +149,7 @@ revm-database-interface = { git = "https://github.com/ziren-patches/revm", branc
 alloy-rlp = "1.0"
 alloy-trie = "1.0"
 alloy-chains = { version = "0.2.0", default-features = false, features = ["serde"] }
-alloy-primitives = { version = "1.2", default-features = false, features = ["sha3-keccak", "map-foldhash", "serde"] }
+alloy-primitives = { version = "1.0.0", default-features = false, features = ["sha3-keccak", "map-foldhash", "serde"] }
 alloy-provider = { git = "https://github.com/ziren-patches/alloy", branch = "patch-1.0.41", default-features = false, features = [
     "reqwest",
     "reqwest-rustls-tls",

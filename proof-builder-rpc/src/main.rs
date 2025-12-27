@@ -62,8 +62,8 @@ async fn main() -> anyhow::Result<()> {
             match run_generate_proof_tasks(cfg, local_db, 5, cancel_token_clone).await {
                 Ok(tag) => Ok(tag),
                 Err(e) => {
-                    tracing::error!("Generate proof tasks error: {}", e);
-                    Err("Generate error".to_string())
+                    tracing::error!("Main program is exiting: {e:?}");
+                    Err(e.to_string())
                 }
             }
         }));

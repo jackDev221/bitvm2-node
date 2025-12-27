@@ -99,9 +99,29 @@ async fn fetch_withdrawal(
     let mut block_numbers = vec![];
     let mut graph_ids: Vec<[u8; 16]> = vec![];
     for i in start..start + batch_size {
-        let block = provider.get_block(i.into()).await.unwrap().unwrap();
+        let block = match provider.get_block(i.into()).await {
+            Ok(Some(x)) => x,
+            Ok(None) => {
+                tracing::error!("get block {i} returns none");
+                continue;
+            }
+            Err(e) => {
+                tracing::error!("get block {i} error, {e}");
+                continue;
+            }
+        };
         for txid in block.transactions.hashes() {
-            let txn = provider.get_transaction_by_hash(txid).await.unwrap().unwrap();
+            let txn = match provider.get_transaction_by_hash(txid).await {
+                Ok(Some(x)) => x,
+                Ok(None) => {
+                    tracing::error!("get transaction by hash {txid} returns none");
+                    continue;
+                },
+                Err(e) => {
+                    tracing::error!("get transaction by hash {txid} error, {e}");
+                    continue;
+                }
+            };
             let to = txn.to();
             let input = txn.input();
             if to == Some(*l2_contract_address) && &input[0..4] == proceed_withdraw_method_id {
@@ -156,7 +176,7 @@ pub async fn fetch_state_chain(
     assert!(start > 0, "Don't get genesis block from the consensus layer.");
     let mut blocks: Vec<_> = Vec::new();
     let addr = l2_contract_address.trim_prefix("0x");
-    let bytes: [u8; 20] = hex::decode(addr).unwrap().try_into().unwrap();
+    let bytes: [u8; 20] = hex::decode(addr)?.try_into().unwrap();
     let l2_contract_address = Address::from(bytes);
     let base_slot: [u8; 32] = U256::from(16).to_be_bytes().try_into()?;
 
@@ -185,10 +205,10 @@ pub async fn fetch_state_chain(
                 .filter(|&(_, &val)| val == i)
                 .map(|(i, _)| i)
                 .collect();
-            let _graph_ids: Vec<_> = indices.iter().map(|&x| graph_ids[x].clone()).collect();
-            if _graph_ids.len() > 0 {
-                tracing::info!("block_id: {i}, check graph_ids: {:?}", _graph_ids);
-                Some((l2_contract_address, base_slot, _graph_ids))
+            let hit_graph_ids: Vec<_> = indices.iter().map(|&x| graph_ids[x].clone()).collect();
+            if hit_graph_ids.len() > 0 {
+                tracing::info!("block_id: {i}, check graph_ids: {:?}", hit_graph_ids);
+                Some((l2_contract_address, base_slot, hit_graph_ids))
             } else {
                 None
             }

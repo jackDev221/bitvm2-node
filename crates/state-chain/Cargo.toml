@@ -30,8 +30,7 @@ prost = { version = "0.13", features = ["prost-derive"], default-features = fals
 prost-derive = { version = "0.13", default-features = true }
 base64 = "0.21"
 
-alloy-consensus = { git = "https://github.com/ziren-patches/alloy", branch = "patch-1.0.41", default-features = false, features = ["serde", "serde-bincode-compat"] }
-
+alloy-consensus = { workspace = true, default-features = false, features = ["serde", "serde-bincode-compat"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
