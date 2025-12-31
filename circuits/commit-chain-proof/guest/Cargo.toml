@@ -13,7 +13,8 @@ commit-chain = { path = "../../../crates/commit-chain" }
 # Ziren
 zkm-zkvm = { git = "https://github.com/ProjectZKM/Ziren", package = "zkm-zkvm", features = ["verify"] }
 zkm-verifier = { git = "https://github.com/ProjectZKM/Ziren", package = "zkm-verifier" }
-#zkm-zkvm = { path = "../../../Ziren/crates/zkvm/entrypoint" }
+#zkm-verifier = { path = "../../../../Ziren/crates/verifier" }
+#zkm-zkvm = { path = "../../../../Ziren/crates/zkvm/entrypoint", features = ["verify"] }
 
 # Statically turns off logging
 tracing = { version = "0.1", features = ["max_level_trace"] }
