@@ -1717,7 +1717,7 @@ pub async fn get_watchtower_commitment(
     let mut storage_processor = local_db.acquire().await?;
     if let Some(graph) = storage_processor.find_graph(&graph_id).await?
         && let (Some(challenge_txid), Some(challenge_init_txid)) =
-            (graph.challenge_txid, graph.watchtower_challenge_init_txid)
+            (graph.local_watchtower_challenge_txid, graph.watchtower_challenge_init_txid)
     {
         if graph.proceed_withdraw_height <= 0 {
             warn!("graph {graph_id} proceed_withdraw_height <= 0, waiting to been updated");
@@ -3722,6 +3722,7 @@ pub async fn store_graph(local_db: &LocalDB, simple_graph: &SimplifiedBitvm2Grap
         zkm_version: bitvm2_graph.parameters.zkm_version.clone(),
         status_updated_at: current_time,
         proceed_withdraw_height: 0,
+        local_watchtower_challenge_txid: None,
         created_at: current_time,
         updated_at: current_time,
     };
@@ -3753,6 +3754,18 @@ pub async fn store_graph(local_db: &LocalDB, simple_graph: &SimplifiedBitvm2Grap
     .await?;
 
     tx.commit().await?;
+    Ok(())
+}
+
+pub async fn update_local_watchtower_challenge_txid(
+    local_db: &LocalDB,
+    graph_id: Uuid,
+    txid: Txid,
+) -> Result<()> {
+    let mut storage_processor = local_db.start_transaction().await?;
+    storage_processor
+        .update_graph(&GraphUpdate::new(graph_id).with_local_watchtower_challenge_txid(txid.into()))
+        .await?;
     Ok(())
 }
 

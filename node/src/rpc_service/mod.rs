@@ -580,6 +580,7 @@ mod tests {
             zkm_version: "zkm_0.1.0".to_string(),
             status_updated_at: current_time_secs(),
             proceed_withdraw_height: 0,
+            local_watchtower_challenge_txid: None,
             created_at: current_time_secs(),
             updated_at: current_time_secs(),
         });
@@ -617,6 +618,7 @@ mod tests {
             zkm_version: "zkm_0.1.0".to_string(),
             status_updated_at: current_time_secs(),
             proceed_withdraw_height: 0,
+            local_watchtower_challenge_txid: None,
             created_at: current_time_secs(),
             updated_at: current_time_secs(),
         });

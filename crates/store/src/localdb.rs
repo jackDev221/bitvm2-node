@@ -508,6 +508,7 @@ pub struct GraphUpdate {
     pub bridge_out_start_at: Option<i64>,
     pub init_withdraw_tx_hash: Option<String>,
     pub proceed_withdraw_height: Option<i64>,
+    pub local_watchtower_challenge_txid: Option<SerializableTxid>,
 }
 
 impl GraphUpdate {
@@ -523,6 +524,7 @@ impl GraphUpdate {
             bridge_out_start_at: None,
             init_withdraw_tx_hash: None,
             proceed_withdraw_height: None,
+            local_watchtower_challenge_txid: None,
         }
     }
 
@@ -546,6 +548,15 @@ impl GraphUpdate {
     /// Set challenge transaction ID
     pub fn with_challenge_txid(mut self, challenge_txid: SerializableTxid) -> Self {
         self.challenge_txid = Some(challenge_txid);
+        self
+    }
+
+    /// Set local watchtower challenge  transaction ID
+    pub fn with_local_watchtower_challenge_txid(
+        mut self,
+        local_watchtower_challenge_txid: SerializableTxid,
+    ) -> Self {
+        self.local_watchtower_challenge_txid = Some(local_watchtower_challenge_txid);
         self
     }
 
@@ -583,6 +594,7 @@ impl GraphUpdate {
             || self.bridge_out_start_at.is_some()
             || self.init_withdraw_tx_hash.is_some()
             || self.proceed_withdraw_height.is_some()
+            || self.local_watchtower_challenge_txid.is_some()
     }
 
     pub fn get_query_builder(&self, base_sql: &str) -> QueryBuilder {
@@ -601,6 +613,12 @@ impl GraphUpdate {
         }
         if let Some(ref challenge_txid) = self.challenge_txid {
             query_builder.set_field("challenge_txid", QueryParam::BTCTxid(challenge_txid.clone()));
+        }
+        if let Some(ref local_watchtower_challenge_txid) = self.local_watchtower_challenge_txid {
+            query_builder.set_field(
+                "local_watchtower_challenge_txid",
+                QueryParam::BTCTxid(local_watchtower_challenge_txid.clone()),
+            );
         }
         if let Some(ref disprove_txid) = self.disprove_txid {
             query_builder.set_field("disprove_txid", QueryParam::BTCTxid(disprove_txid.clone()));
@@ -1119,8 +1137,8 @@ impl<'a> StorageProcessor<'a> {
                     quick_challenge_txid, challenge_incomplete_kickoff_txid, pegin_txid, kickoff_txid, take1_txid,
                     challenge_txid, take2_txid, disprove_txid,  watchtower_challenge_init_txid, watchtower_challenge_timeout_txids, nack_txids,
                     blockhash_commit_timeout_txid, assert_init_txid, assert_commit_timeout_txids, init_withdraw_tx_hash,
-                    bridge_out_start_at, zkm_version, status_updated_at, proceed_withdraw_height,  created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    bridge_out_start_at, zkm_version, status_updated_at, proceed_withdraw_height, local_watchtower_challenge_txid,  created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             graph.graph_id,
             graph.instance_id,
             graph.kickoff_index,
@@ -1154,6 +1172,7 @@ impl<'a> StorageProcessor<'a> {
             graph.zkm_version,
             graph.status_updated_at,
             graph.proceed_withdraw_height,
+            graph.local_watchtower_challenge_txid,
             graph.created_at,
             graph.updated_at,
         ).execute(self.conn())
@@ -1239,6 +1258,7 @@ impl<'a> StorageProcessor<'a> {
                     zkm_version,
                     status_updated_at,
                     proceed_withdraw_height,
+                    local_watchtower_challenge_txid,
                     CASE
                         WHEN bridge_out_start_at > 0
                         THEN bridge_out_start_at

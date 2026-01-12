@@ -425,6 +425,7 @@ pub struct Graph {
     pub zkm_version: String,
     pub status_updated_at: i64,
     pub proceed_withdraw_height: i64,
+    pub local_watchtower_challenge_txid: Option<SerializableTxid>,
     pub created_at: i64,
     pub updated_at: i64,
 }
